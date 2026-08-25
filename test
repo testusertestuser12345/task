@@ -96,3 +96,52 @@ qemu-system-s390x -M s390-ccw-virtio -m 512m \
   -device virtio-net-ccw,netdev=net0
 
 -------------------------------------------------------------------------------------------------
+
+
+
+MIPS 32-bit (Big Endian) 用
+Kali Linuxのターミナルで実行してください。
+
+Bash
+mkdir -p ~/tools_mips && cd ~/tools_mips
+
+# MIPS (Big Endian) 向け静的 netcat バイナリを取得
+wget https://raw.githubusercontent.com/darkerego/mips-binaries/master/netcat -O nc_mips32
+
+# ファイルサイズ確認（0バイトではないことを確認）
+ls -lh nc_mips32
+
+# 配信用HTTPサーバの起動
+python3 -m http.server 8000
+
+
+MIPSEL 32-bit (Little Endian) 用
+ルータのCPUがリトルエンディアン（MediaTek / Realtek / Ralink等）の場合は、こちらの busybox（nc 内蔵）を取得します。
+
+Bash
+mkdir -p ~/tools_mips && cd ~/tools_mips
+
+# MIPSEL 向け静的 busybox バイナリを取得
+wget https://raw.githubusercontent.com/darkerego/mips-binaries/master/busybox-mips -O nc_mipsel32
+
+# ファイルサイズ確認
+ls -lh nc_mipsel32
+
+# 配信用HTTPサーバの起動
+python3 -m http.server 8000
+
+
+ARM 32-bit 用（Kali Linux側で実行）
+Kaliのターミナルで以下を貼り付けて実行してください。
+
+Bash
+mkdir -p ~/tools_arm && cd ~/tools_arm
+
+# ARM 32-bit 向け静的 netcat バイナリを取得
+wget https://raw.githubusercontent.com/therealsaumil/static-arm-bins/master/nc-arm-static -O nc_arm32
+
+# ファイルサイズ確認（0バイトではなく、約401KBであるか確認）
+ls -lh nc_arm32
+
+# ルータ配信用HTTPサーバの起動
+python3 -m http.server 8000
