@@ -1,0 +1,51 @@
+# 1. 必要な前提パッケージとgitをインストール
+sudo apt update && sudo apt install -y git python3-pip python3-venv
+
+# 2. リポジトリのクローン（例としてRouterSploit）
+git clone https://github.com/threat9/routersploit
+cd routersploit
+
+# 3. 仮想環境を作成して有効化
+python3 -m venv venv
+source venv/bin/activate
+
+# 4. 依存ライブラリのインストール
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. ツールの起動
+python3 rsf.py
+
+※エラーが起きる
+
+pip install setuptools
+python3 rsf.py
+
+※エラーが起きる
+
+pip install "setuptools<70.0.0"
+pip install setuptools==69.5.1
+python3 rsf.py
+
+※エラーが起きる
+
+
+pip install telnetlib3
+python3 rsf.py
+
+成功
+
+概要
+RouterSploitの主なモジュール構成
+
+RouterSploitは目的別に以下のようなモジュール群で構成されています。
+
+Autopwn: ターゲット機器に対して既知の脆弱性チェックを一括で実行するモジュール。
+
+Exploits: 特定のメーカーや型番の脆弱性を検証するためのモジュール。
+
+Creds: ネットワーク機器のデフォルト認証情報(初期パスワードなど)の安全性を検証するモジュール。
+
+Scanners: targetが特定のサービスや脆弱性の影響を受けるかを確認するスキャンモジュール。
+
+Payloads: 検証成功時に動作を確認するための実行コード(リバースシェルなど)。
