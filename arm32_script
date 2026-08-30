@@ -1,0 +1,431 @@
+#!/bin/bash
+set -e
+
+# =========================================================
+# ARM32 QEMU user-mode lab
+#
+# Kali  : 192.168.100.1
+# ARM32 : 192.168.100.2
+#
+# RootFS: Alpine ARMv7
+# QEMU  : qemu-user-binfmt
+#
+# 初回:
+#   不足パッケージだけinstall
+#   ARM rootfsが無ければdownload
+#
+# 2回目以降:
+#   install/downloadをskip
+#
+# exit後:
+#   namespace/veth/mountをcleanup
+#   rootfsは残す
+# =========================================================
+
+NS="arm32"
+
+HOST_IF="veth-host"
+GUEST_IF="veth-arm"
+
+HOST_IP="192.168.100.1/24"
+GUEST_IP="192.168.100.2/24"
+
+ALPINE_VERSION="3.24.1"
+ALPINE_FILE="alpine-minirootfs-${ALPINE_VERSION}-armv7.tar.gz"
+ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/armv7/${ALPINE_FILE}"
+
+# ---------------------------------------------------------
+# sudo前のHOME
+# ---------------------------------------------------------
+
+if [ -n "$SUDO_USER" ]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    USER_HOME="$HOME"
+fi
+
+BASE_DIR="${USER_HOME}/qemu-arm32"
+ROOTFS="${BASE_DIR}/rootfs"
+
+mkdir -p "$BASE_DIR"
+
+
+# =========================================================
+# Cleanup
+# =========================================================
+
+cleanup() {
+
+    echo
+    echo "=========================================="
+    echo "[*] ARM32 environment cleanup..."
+    echo "=========================================="
+
+    if mountpoint -q "$ROOTFS/proc" 2>/dev/null; then
+        umount "$ROOTFS/proc" 2>/dev/null || true
+    fi
+
+    if mountpoint -q "$ROOTFS/sys" 2>/dev/null; then
+        umount -R "$ROOTFS/sys" 2>/dev/null || true
+    fi
+
+    if mountpoint -q "$ROOTFS/dev" 2>/dev/null; then
+        umount -R "$ROOTFS/dev" 2>/dev/null || true
+    fi
+
+    ip netns del "$NS" 2>/dev/null || true
+
+    ip link del "$HOST_IF" 2>/dev/null || true
+
+    echo "[+] Cleanup complete."
+}
+
+
+trap cleanup EXIT INT TERM
+
+
+# =========================================================
+# root check
+# =========================================================
+
+if [ "$EUID" -ne 0 ]; then
+
+    echo
+    echo "[!] Run with sudo:"
+    echo
+    echo "sudo ./start-arm32.sh"
+    echo
+
+    exit 1
+fi
+
+
+echo
+echo "=========================================="
+echo " ARM32 QEMU user-mode environment"
+echo "=========================================="
+
+echo
+echo "Base   : $BASE_DIR"
+echo "RootFS : $ROOTFS"
+echo "Kali   : 192.168.100.1"
+echo "ARM32  : 192.168.100.2"
+echo
+
+
+# =========================================================
+# 1. 必要パッケージ確認
+# =========================================================
+
+echo "[1/8] Checking required packages..."
+
+PACKAGES=(
+    qemu-user
+    qemu-user-binfmt
+    binfmt-support
+    wget
+    tar
+    iproute2
+    iputils-ping
+    file
+    util-linux
+)
+
+MISSING=()
+
+for pkg in "${PACKAGES[@]}"; do
+
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+
+        MISSING+=("$pkg")
+
+    fi
+
+done
+
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+
+    echo
+    echo "[*] Missing packages:"
+    printf '  %s\n' "${MISSING[@]}"
+
+    echo
+    echo "[*] Running apt update..."
+
+    apt update
+
+    echo
+    echo "[*] Installing missing packages..."
+
+    apt install -y "${MISSING[@]}"
+
+else
+
+    echo "[+] All required packages already installed."
+    echo "[+] Skipping apt."
+
+fi
+
+
+# =========================================================
+# 2. binfmt確認
+# =========================================================
+
+echo
+echo "[2/8] Checking ARM binfmt..."
+
+if [ ! -e /proc/sys/fs/binfmt_misc/qemu-arm ]; then
+
+    echo "[*] qemu-arm entry not found."
+    echo "[*] Trying to reload binfmt..."
+
+    systemctl restart systemd-binfmt 2>/dev/null || true
+    systemctl restart binfmt-support 2>/dev/null || true
+
+    sleep 1
+
+fi
+
+
+if [ ! -e /proc/sys/fs/binfmt_misc/qemu-arm ]; then
+
+    echo
+    echo "[!] qemu-arm binfmt entry unavailable."
+    echo
+    echo "Check manually:"
+    echo
+    echo "ls /proc/sys/fs/binfmt_misc/"
+    echo
+
+    exit 1
+
+fi
+
+
+echo "[+] ARM binfmt ready."
+
+
+# =========================================================
+# 3. ARM rootfs
+# =========================================================
+
+echo
+echo "[3/8] Checking ARM32 RootFS..."
+
+if [ ! -x "$ROOTFS/bin/busybox" ]; then
+
+    echo "[*] ARM32 RootFS not found."
+    echo "[*] Downloading Alpine ARMv7..."
+
+    cd "$BASE_DIR"
+
+    wget -O "$ALPINE_FILE" "$ALPINE_URL"
+
+    rm -rf "$ROOTFS"
+
+    mkdir -p "$ROOTFS"
+
+    tar xzf "$ALPINE_FILE" \
+        -C "$ROOTFS"
+
+    rm -f "$ALPINE_FILE"
+
+    echo "[+] ARM32 RootFS installed."
+
+else
+
+    echo "[+] Existing ARM32 RootFS found."
+    echo "[+] Skipping download."
+
+fi
+
+
+echo
+echo "[*] BusyBox architecture:"
+
+file "$ROOTFS/bin/busybox"
+
+
+# =========================================================
+# 4. ARM32テスト
+# =========================================================
+
+echo
+echo "[4/8] Testing ARM32 environment..."
+
+ARCH=$(chroot "$ROOTFS" /bin/sh -c 'uname -m')
+
+echo
+echo "Detected architecture: $ARCH"
+
+
+if [ "$ARCH" != "armv7l" ]; then
+
+    echo
+    echo "[!] ARM32 test failed."
+    echo
+    echo "Expected : armv7l"
+    echo "Detected : $ARCH"
+    echo
+
+    exit 1
+
+fi
+
+
+echo "[+] ARM32 execution OK."
+
+
+# =========================================================
+# 5. 古いネットワーク削除
+# =========================================================
+
+echo
+echo "[5/8] Creating isolated network..."
+
+ip netns del "$NS" 2>/dev/null || true
+ip link del "$HOST_IF" 2>/dev/null || true
+
+
+# namespace
+ip netns add "$NS"
+
+
+# veth pair
+ip link add "$HOST_IF" \
+    type veth \
+    peer name "$GUEST_IF"
+
+
+# guest側をnamespaceへ
+ip link set "$GUEST_IF" \
+    netns "$NS"
+
+
+# =========================================================
+# Kali側
+# =========================================================
+
+ip addr add "$HOST_IP" \
+    dev "$HOST_IF"
+
+ip link set "$HOST_IF" up
+
+
+# =========================================================
+# ARM側
+# =========================================================
+
+ip netns exec "$NS" \
+    ip link set lo up
+
+ip netns exec "$NS" \
+    ip link set "$GUEST_IF" up
+
+ip netns exec "$NS" \
+    ip addr add "$GUEST_IP" \
+    dev "$GUEST_IF"
+
+
+# =========================================================
+# 6. virtual filesystem
+# =========================================================
+
+echo
+echo "[6/8] Mounting virtual filesystems..."
+
+mkdir -p \
+    "$ROOTFS/proc" \
+    "$ROOTFS/sys" \
+    "$ROOTFS/dev"
+
+
+if ! mountpoint -q "$ROOTFS/proc"; then
+
+    mount -t proc proc "$ROOTFS/proc"
+
+fi
+
+
+if ! mountpoint -q "$ROOTFS/sys"; then
+
+    mount --rbind /sys "$ROOTFS/sys"
+    mount --make-rslave "$ROOTFS/sys"
+
+fi
+
+
+if ! mountpoint -q "$ROOTFS/dev"; then
+
+    mount --rbind /dev "$ROOTFS/dev"
+    mount --make-rslave "$ROOTFS/dev"
+
+fi
+
+
+# =========================================================
+# 7. Network確認
+# =========================================================
+
+echo
+echo "[7/8] Network ready"
+echo
+
+echo "------------------------------------------"
+echo "[Kali]"
+echo "------------------------------------------"
+
+ip addr show "$HOST_IF"
+
+echo
+echo "------------------------------------------"
+echo "[ARM32]"
+echo "------------------------------------------"
+
+ip netns exec "$NS" \
+    ip addr show "$GUEST_IF"
+
+
+echo
+echo "Kali  : 192.168.100.1"
+echo "ARM32 : 192.168.100.2"
+
+
+# =========================================================
+# 8. ARM32 shell
+# =========================================================
+
+echo
+echo "=========================================="
+echo "[8/8] Entering ARM32 shell"
+echo "=========================================="
+
+echo
+echo "Check:"
+echo
+echo "  uname -m"
+echo "  uname -a"
+echo "  ls /"
+echo "  ip addr"
+echo "  ping -c 3 192.168.100.1"
+echo
+echo "Expected:"
+echo
+echo "  uname -m"
+echo "  -> armv7l"
+echo
+echo "ARM32 IP:"
+echo "  -> 192.168.100.2"
+echo
+echo "Exit:"
+echo
+echo "  exit"
+echo
+echo "=========================================="
+echo
+
+
+ip netns exec "$NS" \
+    chroot "$ROOTFS" \
+    /bin/sh
