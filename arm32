@@ -1,0 +1,137 @@
+構成例
+Kali host
+  192.168.100.1
+       |
+      veth
+       |
+ARM32 namespace
+  192.168.100.2
+       |
+   Alpine ARMv7
+       |
+ qemu-arm-static
+       |
+     /bin/sh
+
+1. Kaliに必要なものを入れる
+sudo apt update
+
+sudo apt install -y \
+  qemu-user-static \
+  iproute2 \
+  wget \
+  tar
+
+2. ARM32のrootfsを取得
+
+作業ディレクトリを作ります。
+mkdir -p ~/qemu-arm32
+cd ~/qemu-arm32
+
+Alpine ARMv7の公式minirootfsを取得します。
+wget https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/armv7/alpine-minirootfs-3.24.1-armv7.tar.gz
+
+rootfsを作ります。
+mkdir rootfs
+sudo tar xzf alpine-minirootfs-3.24.1-armv7.tar.gz \
+  -C rootfs
+
+確認：
+file rootfs/bin/busybox
+
+ARM 32bit ELFになっていればOKです。
+
+3. QEMUをrootfsへ入れる
+sudo mkdir -p rootfs/usr/bin
+
+sudo cp /usr/bin/qemu-arm \
+  rootfs/usr/bin/
+
+確認：
+ls -l rootfs/usr/bin/qemu-arm-static
+
+4. まずネットワーク無しでARMシェルを確認
+cd ~/qemu-arm32
+
+sudo chroot rootfs \
+  /usr/bin/qemu-arm-static \
+  /bin/sh
+
+uname -m
+
+期待する結果：
+
+armv7l
+
+
+5. ARM環境に専用IPを付ける
+
+Kali
+192.168.100.1
+
+ARM32
+192.168.100.2
+
+まずnamespaceを作ります。
+sudo ip netns add arm32
+sudo ip netns list
+arm32とでればOK
+
+6. KaliとARMをvethで接続
+
+仮想LANケーブルを作ります。
+sudo ip link add veth-host \
+  type veth \
+  peer name veth-arm
+
+ARM側をnamespaceへ移動：
+sudo ip link set veth-arm netns arm32
+
+7. Kali側IP
+
+sudo ip addr add 192.168.100.1/24 \
+  dev veth-host
+
+sudo ip link set veth-host up
+
+確認
+ip addr show veth-host
+
+以下があればOKです。
+inet 192.168.100.1/24
+
+8. ARM側IP
+
+sudo ip netns exec arm32 \
+  ip link set lo up
+
+ARM側vethを有効化：
+
+sudo ip netns exec arm32 \
+  ip link set veth-arm up
+
+IPを付けます。
+sudo ip netns exec arm32 \
+  ip addr add 192.168.100.2/24 \
+  dev veth-arm
+
+確認
+sudo ip netns exec arm32 ip addr
+
+こうなる
+veth-arm:
+    inet 192.168.100.2/24
+
+9. ARMシェルへ入る
+
+cd ~/qemu-arm32
+
+sudo ip netns exec arm32 \
+  chroot rootfs \
+  /usr/bin/qemu-arm \
+  /bin/sh
+
+10. ARM32確認
+
+10. ARM32確認
+
