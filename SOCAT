@@ -1,0 +1,73 @@
+arm32
+1. Dockerコンテナを起動（Kali側の端末で実行）
+
+docker run -it --name socat-build ubuntu:22.04 /bin/bash
+
+2. パッケージインストール（コンテナ内）
+
+apt update && apt install -y build-essential wget bzip2 gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu upx-ucl
+
+3. ソースコード準備（コンテナ内）
+
+mkdir /build && cd /build
+wget http://www.dest-unreach.org/socat/download/socat-1.8.0.0.tar.gz
+tar -xvf socat-1.8.0.0.tar.gz
+cd socat-1.8.0.0
+
+4. ARM32 (armv5) のビルド（1行ずつ実行）
+
+./configure --build=x86_64-linux-gnu --host=arm-linux-gnueabi --disable-openssl --disable-readline CC=arm-linux-gnueabi-gcc CFLAGS="-static" LDFLAGS="-static"
+
+make
+
+arm-linux-gnueabi-strip socat
+
+mkdir -p /out
+
+mv socat /out/socat_armv5
+
+make distclean
+
+Step 7: UPX圧縮（任意）
+
+upx --brute /out/socat_*
+
+Step 8: Kali（ホスト側）へ取り出し
+
+docker cp socat-build:/out ./socat_binaries
+
+====================================================
+
+Step 5: MIPS32 Big-Endian (mips) のビルド
+
+./configure --build=x86_64-linux-gnu --host=mips-linux-gnu --disable-openssl --disable-readline CC=mips-linux-gnu-gcc CFLAGS="-static" LDFLAGS="-static"
+
+make
+
+mips-linux-gnu-strip socat
+
+mv socat /out/socat_mipsbe
+
+make distclean
+
+====================================================
+
+Step 6: MIPS32 Little-Endian (mipsel) のビルド
+
+./configure --build=x86_64-linux-gnu --host=mipsel-linux-gnu --disable-openssl --disable-readline CC=mipsel-linux-gnu-gcc CFLAGS="-static" LDFLAGS="-static"
+
+make
+
+mipsel-linux-gnu-strip socat
+
+mv socat /out/socat_mipsle
+
+Step 7: UPX圧縮（任意）
+
+upx --brute /out/socat_*
+
+====================================================
+
+Step 8: Kali（ホスト側）へ取り出し
+
+docker cp socat-build:/out ./socat_binaries
