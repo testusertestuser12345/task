@@ -1,0 +1,389 @@
+証明書
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
+
+
+ローカルドメイン
+sudo nano /etc/hosts
+
+サーバ起動
+sudo python3 mock_server.py
+
+スクリプト起動
+python3 check.py target.txt endpoint_echo.txt -o result.txt
+
+備考
+
+127.0.0.1
+text.com:8443
+
+/ document
+text hello_world
+test hello_test
+
+
+検証サーバースクリプト　ここから
+
+import http.server
+import ssl
+import threading
+
+class MockHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        port = self.server.server_port
+
+        # 443/text -> hello_world
+        if port == 443 and self.path == "/text":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"hello_world")
+
+        # 8443/test -> hello_test (text.com経由含む)
+        elif port == 8443 and self.path == "/test":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"hello_test")
+
+        # 443 のドキュメントルート -> document
+        elif port == 443 and self.path == "/":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"document")
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+
+    def log_message(self, format, *args):
+        pass
+
+def start_http(port):
+    server = http.server.HTTPServer(('0.0.0.0', port), MockHandler)
+    server.serve_forever()
+
+def start_https(port):
+    server = http.server.HTTPServer(('0.0.0.0', port), MockHandler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+
+if __name__ == "__main__":
+    print("Mock Server Started (HTTP: 80 | HTTPS: 443, 8443)")
+    threading.Thread(target=start_http, args=(80,), daemon=True).start()
+    threading.Thread(target=start_https, args=(443,), daemon=True).start()
+    threading.Thread(target=start_https, args=(8443,), daemon=True).start()
+    threading.Event().wait()
+
+
+
+
+
+
+
+
+チェックスクリプト
+ここから
+
+# コマンドラインからの引数（オプションやファイル名）を簡単に処理するためのモジュールを読み込みます
+import argparse
+# システムに関する機能や標準入出力、プログラムの終了を行うためのモジュールを読み込みます
+import sys
+# URLに対してリクエストを送信し、Webページ等のデータを取得するためのモジュールを読み込みます
+import urllib.request
+# HTTPリクエスト時に発生したエラー（404エラーや接続拒否など）を処理するためのモジュールを読み込みます
+import urllib.error
+# 暗号化通信（HTTPS/SSL/TLS）の設定や証明書の検証ルールを扱うためのモジュールを読み込みます
+import ssl
+
+# ターミナルで文字色を赤色に変更するための制御用エスケープシーケンスコードを定義します
+RED = "\033[31m"
+# ターミナルの文字色を通常のデフォルト状態に戻すためのエスケープシーケンスコードを定義します
+RESET = "\033[0m"
+
+# コマンドライン引数をパース（解析）する関数を定義します
+def parse_args():
+    # 引数解析用のオブジェクトを作成し、スクリプトの概要を設定します
+    parser = argparse.ArgumentParser(description="エンドポイントにアクセスし、指定文字列が含まれているかチェックします。")
+    # 必須の第1引数として、ターゲット（IPやドメイン）のリストファイルパスを受け取ります
+    parser.add_argument("target_file", help="IPまたはドメインのリストファイル")
+    # 必須の第2引数として、エンドポイントと期待文字列のリストファイルパスを受け取ります
+    parser.add_argument("endpoint_file", help="エンドポイントと期待する文字列のリストファイル")
+    # オプション引数 -v (verbose) をフラグとして定義します（互換性維持のため残しています）
+    parser.add_argument("-v", "--verbose", action="store_true", help="詳細情報を出力")
+    # オプション引数 -o (output) で結果を出力・保存するファイルパスを指定できるようにします
+    parser.add_argument("-o", "--output", help="結果を指定したファイルに保存します")
+    # 解析した引数の結果をオブジェクトとして呼び出し元に返します
+    return parser.parse_args()
+
+# ターゲット（IP/ドメイン）が書かれたテキストファイルを読み込む関数を定義します
+def load_targets(filepath):
+    # 読み込んだターゲットを保持するための空リストを用意します
+    targets = []
+    # 指定されたファイルパスをUTF-8エンコーディングで安全に開きます
+    with open(filepath, 'r', encoding='utf-8') as f:
+        # ファイルから1行ずつ取り出してループ処理を行います
+        for line in f:
+            # 行頭や行末にある余分な空白文字や改行コードを取り除きます
+            line = line.strip()
+            # 空行でなく、かつ '#' で始まるコメント行でない場合のみ処理します
+            if line and not line.startswith('#'):
+                # 有効なターゲットとしてリストに追加します
+                targets.append(line)
+    # 完成したターゲットのリストを返します
+    return targets
+
+# エンドポイントと検索対象文字列が書かれたファイルを読み込む関数を定義します
+def load_endpoints(filepath):
+    # エンドポイント情報を保持するための空リストを用意します
+    endpoints = []
+    # ファイルをUTF-8エンコーディングで開きます
+    with open(filepath, 'r', encoding='utf-8') as f:
+        # 1行ずつループ処理します
+        for line in f:
+            # 余分な空白や改行を取り除きます
+            line = line.strip()
+            # 空行およびコメント行を除外します
+            if line and not line.startswith('#'):
+                # 空白文字で「エンドポイント」と「期待文字列」の2つに分割します（最大1回分割）
+                parts = line.split(maxsplit=1)
+                # エンドポイントと期待文字列の両方が存在する場合
+                if len(parts) == 2:
+                    # タプル形式 (エンドポイント, 期待文字列) でリストに追加します
+                    endpoints.append((parts[0], parts[1]))
+                # エンドポイントのみが指定されている場合
+                elif len(parts) == 1:
+                    # 期待文字列を空文字としてリストに追加します
+                    endpoints.append((parts[0], ""))
+    # 解析結果のリストを返します
+    return endpoints
+
+# 指定したURLに接続し、レスポンス内に期待文字列が含まれるか検証する関数です
+def check_url(url, expected_str):
+    # SSL/TLSの設定オブジェクトを作成します
+    ctx = ssl.create_default_context()
+    # 自己署名証明書（オラクル証明書）等でも接続できるようホスト名検証を無効化します
+    ctx.check_hostname = False
+    # 証明書の有効性検証を無効化（エラー回避）します
+    ctx.verify_mode = ssl.CERT_NONE
+
+    # Webサーバーに送信するHTTPリクエストオブジェクトを生成し、一般的なUser-Agentを設定します
+    req = urllib.request.Request(
+        url,
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+
+    # 接続処理を実行します（ネットワークエラー等の例外を捕捉できるようにします）
+    try:
+        # タイムアウトを5秒に設定し、指定したSSLコンテキストを用いてURLを開きます
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
+            # サーバーからのレスポンスボディを取得し、テキストとしてデコードします
+            body = response.read().decode('utf-8', errors='ignore')
+            # レスポンスボディ内に期待する文字列が含まれているかチェックします
+            if expected_str in body:
+                # 含まれている場合は "OK" を返します
+                return "OK"
+            else:
+                # 含まれていない場合は "NO" を返します
+                return "NO"
+    # 通信失敗、タイムアウト、404エラー等が発生した場合の例外処理です
+    except Exception:
+        # エラー時は一律で "NO" を返します
+        return "NO"
+
+# プログラムのメイン処理を実行する関数を定義します
+def main():
+    # コマンドライン引数を解析します
+    args = parse_args()
+
+    # 指定されたファイルからターゲットリストを取得します
+    targets = load_targets(args.target_file)
+    # 指定されたファイルからエンドポイントリストを取得します
+    endpoints = load_endpoints(args.endpoint_file)
+
+    # 検査するすべての組み合わせ（タスク）を入れるリストを用意します
+    tasks = []
+    # 取得したターゲットごとにループ処理を行います
+    for target in targets:
+        # ターゲット文字列にすでに "http://" または "https://" が含まれているか判定します
+        if target.startswith("http://") or target.startswith("https://"):
+            # 指定済みの場合はスキップ（追加のプロトコル付与を行わない）します
+            protocols = [""]
+        else:
+            # プロトコル未指定の場合は http:// と https:// の両方を試行対象とします
+            protocols = ["http://", "https://"]
+
+        # プロトコルごとにループします
+        for proto in protocols:
+            # ベースとなるURL（例: https://127.0.0.1:8443）を作成します
+            base_url = f"{proto}{target}"
+            # 各エンドポイントごとにループします
+            for ep, expected_str in endpoints:
+                # エンドポイントの先頭にスラッシュ '/' がなければ付与します
+                ep_clean = ep if ep.startswith('/') else f"/{ep}"
+                # 完成した完全なアクセス先URLを生成します
+                full_url = f"{base_url}{ep_clean}"
+                # タスクリストに (フルURL, 期待文字列) のペアを保存します
+                tasks.append((full_url, expected_str))
+
+    # 全タスク数をカウントします
+    total_tasks = len(tasks)
+    # ファイル保存用の結果を入れるリストを用意します
+    file_results = []
+
+    # タスクを1つずつ取り出し、実行番号（1から開始）を付けてループします
+    for idx, (url, expected_str) in enumerate(tasks, start=1):
+        # check_url関数を呼び出してアクセス確認を行い、"OK" または "NO" を取得します
+        status = check_url(url, expected_str)
+        
+        # 保存用データ文字列を整形します（例: "https://127.0.0.1/text OK"）
+        result_text = f"{url} {status}"
+
+        # --- ファイル保存条件の設定 ---
+        # OKの結果のみを保存する場合（現在有効）
+        if status == "OK":
+            file_results.append(result_text)
+
+        # すべて（OKおよびNO）を保存する場合は上のif文をコメントアウトし、下の行のコメントを解除します
+        # file_results.append(result_text)
+        # -----------------------------
+
+        # 画面出力用の進捗文字列を作成します（例: "(1/12) https://127.0.0.1/text OK"）
+        display_text = f"({idx}/{total_tasks}) {result_text}"
+
+        # 結果が OK の場合
+        if status == "OK":
+            # 行全体を赤色（RED）で表示し、末尾で色を元に戻します（RESET）
+            print(f"{RED}{display_text}{RESET}")
+        # 結果が NO の場合
+        else:
+            # 通常の色でそのまま表示します
+            print(display_text)
+
+    # -o オプションで保存先のファイルパスが指定されている場合
+    if args.output:
+        # 指定されたファイルを開きます（上書きモード、UTF-8）
+        with open(args.output, 'w', encoding='utf-8') as f:
+            # 抽出された結果データを1行ずつ書き込みます
+            for line in file_results:
+                f.write(line + "\n")
+        # コンソールに保存完了通知を表示します
+        print(f"\n結果を {args.output} に保存しました。")
+
+# スクリプトが直接実行された場合にmain関数を呼び出します
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+本番用
+import argparse
+import sys
+import urllib.request
+import urllib.error
+import ssl
+
+RED = "\033[31m"
+RESET = "\033[0m"
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="check.py",
+        usage="%(prog)s TARGET_FILE ENDPOINT_FILE [-o OUTPUT] [-v]",
+        description="HTTP/HTTPS Endpoint Response Matcher",
+        add_help=True
+    )
+    parser.add_argument("target_file", metavar="TARGET_FILE", help="path to targets list file")
+    parser.add_argument("endpoint_file", metavar="ENDPOINT_FILE", help="path to endpoints mapping file")
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose logging")
+    parser.add_argument("-o", "--output", metavar="FILE", help="save matching results to specified file")
+    return parser.parse_args()
+
+def load_targets(filepath):
+    targets = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                targets.append(line)
+    return targets
+
+def load_endpoints(filepath):
+    endpoints = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    endpoints.append((parts[0], parts[1]))
+                elif len(parts) == 1:
+                    endpoints.append((parts[0], ""))
+    return endpoints
+
+def check_url(url, expected_str):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(
+        url,
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
+            body = response.read().decode('utf-8', errors='ignore')
+            if expected_str in body:
+                return "OK"
+            else:
+                return "NO"
+    except Exception:
+        return "NO"
+
+def main():
+    args = parse_args()
+
+    targets = load_targets(args.target_file)
+    endpoints = load_endpoints(args.endpoint_file)
+
+    tasks = []
+    for target in targets:
+        if target.startswith("http://") or target.startswith("https://"):
+            protocols = [""]
+        else:
+            protocols = ["http://", "https://"]
+
+        for proto in protocols:
+            base_url = f"{proto}{target}"
+            for ep, expected_str in endpoints:
+                ep_clean = ep if ep.startswith('/') else f"/{ep}"
+                full_url = f"{base_url}{ep_clean}"
+                tasks.append((full_url, expected_str))
+
+    total_tasks = len(tasks)
+    file_results = []
+
+    for idx, (url, expected_str) in enumerate(tasks, start=1):
+        status = check_url(url, expected_str)
+        result_text = f"{url} {status}"
+
+        if status == "OK":
+            file_results.append(result_text)
+
+        display_text = f"({idx}/{total_tasks}) {result_text}"
+
+        if status == "OK":
+            print(f"{RED}{display_text}{RESET}")
+        else:
+            print(display_text)
+
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            for line in file_results:
+                f.write(line + "\n")
+
+if __name__ == "__main__":
+    main()
