@@ -4,6 +4,8 @@ docker-test/
 ├── cert.pem          # 証明書（自動生成）
 ├── key.pem           # 秘密鍵（自動生成）
 ├── nginx.conf        # NGINX設定
+|   nginx2.conf
+|   nginx3.conf
 └── docker-compose.yml
 
 
@@ -11,7 +13,7 @@ docker-test/
 openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=test-server"
 
 
-nginx.confの設定
+nginx.confの設定(1,2,3ごとに変更する)
   
 events {
     worker_connections 1024;
@@ -61,7 +63,7 @@ services:
     image: nginx:alpine
     container_name: edge-node-beta
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx2.conf:/etc/nginx/nginx.conf:ro #ここをかえる
       - ./cert.pem:/etc/nginx/ssl/cert.pem:ro
       - ./key.pem:/etc/nginx/ssl/key.pem:ro
     networks:
@@ -72,7 +74,7 @@ services:
     image: nginx:alpine
     container_name: edge-node-gamma
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx3.conf:/etc/nginx/nginx.conf:ro　#ここをかえる
       - ./cert.pem:/etc/nginx/ssl/cert.pem:ro
       - ./key.pem:/etc/nginx/ssl/key.pem:ro
     networks:
