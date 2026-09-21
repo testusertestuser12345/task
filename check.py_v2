@@ -1,0 +1,910 @@
+コード
+
+import argparse
+import sys
+import urllib.request
+import urllib.error
+import ssl
+import signal
+from concurrent.futures import ThreadPoolExecutor
+
+RED = "\033[31m"
+RESET = "\033[0m"
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Endpoint checker")
+    parser.add_argument("target_file", help="Target list file")
+    parser.add_argument("endpoint_file", help="Endpoint list file")
+    parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads")
+    return parser.parse_args()
+
+def load_targets(filepath):
+    targets = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                targets.append(line)
+    return targets
+
+def load_endpoints(filepath):
+    endpoints = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    endpoints.append((parts[0], parts[1]))
+                elif len(parts) == 1:
+                    endpoints.append((parts[0], ""))
+    return endpoints
+
+def check_url(url, expected_str, timeout=3):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(
+        url,
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:
+            body = response.read().decode('utf-8', errors='ignore')
+            if expected_str in body:
+                return "OK"
+            else:
+                return "NO"
+    except Exception:
+        return "NO"
+
+def worker(args):
+    idx, url, expected_str = args
+    status = check_url(url, expected_str)
+    return idx, url, status
+
+def main():
+    args = parse_args()
+
+    targets = load_targets(args.target_file)
+    endpoints = load_endpoints(args.endpoint_file)
+
+    tasks = []
+    task_idx = 1
+    for target in targets:
+        if target.startswith("http://"):
+            base_url = target
+        elif target.startswith("https://"):
+            base_url = target
+        else:
+            base_url = f"https://{target}"
+
+        for ep, expected_str in endpoints:
+            ep_clean = ep if ep.startswith('/') else f"/{ep}"
+            full_url = f"{base_url}{ep_clean}"
+            tasks.append((task_idx, full_url, expected_str))
+            task_idx += 1
+
+    total_tasks = len(tasks)
+    file_results = []
+
+    executor = ThreadPoolExecutor(max_workers=args.threads)
+    futures = [executor.submit(worker, task) for task in tasks]
+
+    def signal_handler(sig, frame):
+        print("\n[!] Interrupted.")
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        for future in futures:
+            idx, url, status = future.result()
+            
+            # OKのみファイル保存リストに追加
+            if status == "OK":
+                file_results.append(f"{url} {status}")
+
+            # 全結果をファイルに保存したい場合は上部2行をコメントアウトし、下記を使用:
+            # file_results.append(f"{url} {status}")
+
+            line_str = f"({idx}/{total_tasks}) {url} {status}"
+
+            if status == "OK":
+                print(f"{RED}{line_str}{RESET}")
+            else:
+                print(line_str)
+
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted.")
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(0)
+
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            for line in file_results:
+                f.write(line + "\n")
+        print(f"\nSaved to {args.output}")
+
+if __name__ == "__main__":
+    main()
+
+
+※基本的にはhttps http://をつければhttpになる
+スレッド処理は20がデフォルト
+
+このスクリプトは、指定した「対象（IPやドメイン）」と「エンドポイント（パスと判定文字列）」の組み合わせに対してWebリクエストを送信し、特定の文字列が含まれているかを判定するツールです。
+並行処理（マルチスレッド）: ThreadPoolExecutor を使い、同時に複数のアクセスを並行して行うため、大量のターゲットがあっても高速にチェックできます。
+SSLエラー無視: 証明書エラー（オラクル・期限切れ・IP指定時のドメイン不一致など）を自動的にスキップして通信を行います。視認性: 結果が OK だった場合は、ターミナル上の該当行全体が赤色で強調表示されます。
+保存ロジック: ファイル保存（-o）時は、デフォルトで OK の結果のみを保存します。
+2. コマンドの使い方とオプション解説実行コマンドの基本形
+Bash
+python3 check.py <ターゲットリスト> <エンドポイントリスト> [オプション]
+引数およびオプション一覧引数・オプション設定例説明
+target_filetarget.txt【必須】第一引数。 接続先のIPアドレスやドメインが記載されたファイルパス。
+endpoint_fileendpoint.txt【必須】第二引数。 パスと期待する文字列（スペース区切り）が記載されたファイルパス。
+-o, --output-o result.txt判定結果（OK のみ）を指定したテキストファイルに書き出して保存します。
+-t, --threads-t 50並行して同時通信を行うスレッド数を指定します（デフォルト: 20）。数値が大きいほど処理が高速になります
+
+
+解説コード
+
+import argparse  # コマンドライン引数を解析するための標準ライブラリをインポート
+import sys  # システム関連（スクリプト終了処理など）を操作するライブラリをインポート
+import urllib.request  # HTTP/HTTPSリクエストを送信するためのライブラリをインポート
+import urllib.error  # HTTP通信時のエラー処理を行うためのライブラリをインポート
+import ssl  # SSL/TLS証明書設定や制御を行うためのライブラリをインポート
+import signal  # Ctrl+Cなどのシグナル処理（割り込み検知）を行うライブラリをインポート
+from concurrent.futures import ThreadPoolExecutor  # スレッドプールを使った並列処理を行うためのクラスをインポート
+
+RED = "\033[31m"  # ターミナルの文字色を「赤色」に変更するANSIエスケープシーケンスを定義
+RESET = "\033[0m"  # ターミナルの文字色を「通常（デフォルト）」に戻すANSIエスケープシーケンスを定義
+
+def parse_args():  # コマンドライン引数を処理する関数を定義
+    parser = argparse.ArgumentParser(description="Endpoint checker")  # パーサーオブジェクトを作成
+    parser.add_argument("target_file", help="Target list file")  # 第一引数：ターゲットリストファイルパスを追加
+    parser.add_argument("endpoint_file", help="Endpoint list file")  # 第二引数：エンドポイントリストファイルパスを追加
+    parser.add_argument("-o", "--output", help="Output file path")  # -oオプション：出力ファイル指定機能を追加
+    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads")  # -tオプション：スレッド数指定機能（初期値20）を追加
+    return parser.parse_args()  # 解析した引数オブジェクトを呼び出し元へ返す
+
+def load_targets(filepath):  # ターゲットリストファイルを読み込む関数を定義
+    targets = []  # ターゲットを格納するための空リストを初期化
+    with open(filepath, 'r', encoding='utf-8') as f:  # ファイルをUTF-8形式で読み込みモードで開く
+        for line in f:  # ファイルを1行ずつループ処理
+            line = line.strip()  # 行頭および行末の余分な改行や空白を除去
+            if line and not line.startswith('#'):  # 空行および「#」で始まるコメント行を除外
+                targets.append(line)  # 有効なターゲットをリストに追加
+    return targets  # 読み込んだターゲットのリストを返す
+
+def load_endpoints(filepath):  # エンドポイントリストファイルを読み込む関数を定義
+    endpoints = []  # エンドポイントと期待する文字列のペアを格納する空リストを初期化
+    with open(filepath, 'r', encoding='utf-8') as f:  # ファイルをUTF-8形式で読み込みモードで開く
+        for line in f:  # ファイルを1行ずつループ処理
+            line = line.strip()  # 行頭および行末の余分な改行や空白を除去
+            if line and not line.startswith('#'):  # 空行および「#」で始まるコメント行を除外
+                parts = line.split(maxsplit=1)  # スペースで「パス」と「文字列」の最大2つに分割
+                if len(parts) == 2:  # パスと判定文字列の両方が存在する場合
+                    endpoints.append((parts[0], parts[1]))  # タプル（パス, 期待文字列）としてリストに追加
+                elif len(parts) == 1:  # パスのみが指定されている場合
+                    endpoints.append((parts[0], ""))  # 期待文字列を空文字にしてリストに追加
+    return endpoints  # 読み込んだエンドポイントのリストを返す
+
+def check_url(url, expected_str, timeout=3):  # 指定URLへアクセスし判定を行う関数を定義
+    ctx = ssl.create_default_context()  # デフォルトのSSLコンテキストを作成
+    ctx.check_hostname = False  # SSL接続時にホスト名と証明書の一致チェックを無効化
+    ctx.verify_mode = ssl.CERT_NONE  # SSL証明書の検証（認証局の検証など）を無効化
+
+    req = urllib.request.Request(  # リクエストオブジェクトを作成
+        url,  # アクセス先のURL
+        headers={'User-Agent': 'Mozilla/5.0'}  # User-Agentヘッダーを一般的なブラウザに設定
+    )  # リクエスト定義の終了
+
+    try:  # 例外発生の可能性のあるアクセス処理を開始
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:  # 指定タイムアウトおよびSSL設定でURLを開く
+            body = response.read().decode('utf-8', errors='ignore')  # レスポンスボディをUTF-8でデコード（エラー無視）
+            if expected_str in body:  # ボディ内に期待する文字列が含まれているか判定
+                return "OK"  # 文字列が含まれていれば「OK」を返す
+            else:  # 文字列が含まれていない場合
+                return "NO"  # 「NO」を返す
+    except Exception:  # タイムアウトや接続エラー等の例外が発生した場合
+        return "NO"  # エラー時は一律「NO」を返す
+
+def worker(args):  # マルチスレッドで並行実行される作業用ワーカー関数を定義
+    idx, url, expected_str = args  # 引数（タプル）を解体してタスク番号、URL、期待文字列を取得
+    status = check_url(url, expected_str)  # check_url関数を実行して判定結果（OK/NO）を取得
+    return idx, url, status  # タスク番号、URL、判定結果を呼び出し元へ返す
+
+def main():  # メイン処理を行う関数を定義
+    args = parse_args()  # コマンドライン引数を解析して実行オプションを取得
+
+    targets = load_targets(args.target_file)  # ターゲットリストファイルを読み込む
+    endpoints = load_endpoints(args.endpoint_file)  # エンドポイントリストファイルを読み込む
+
+    tasks = []  # 実行する全タスクを格納する空リストを初期化
+    task_idx = 1  # タスクの連番（インデックス）を1から開始
+    for target in targets:  # ターゲットごとにループ処理
+        if target.startswith("http://"):  # ターゲットがすでに http:// で始まる場合
+            base_url = target  # そのままベースURLとして使用
+        elif target.startswith("https://"):  # ターゲットがすでに https:// で始まる場合
+            base_url = target  # そのままベースURLとして使用
+        else:  # プロトコルが指定されていない場合
+            base_url = f"https://{target}"  # デフォルトで https:// を付与
+
+        for ep, expected_str in endpoints:  # 各ターゲットに対して全エンドポイントをループ処理
+            ep_clean = ep if ep.startswith('/') else f"/{ep}"  # パスの先頭に「/」がない場合は補完
+            full_url = f"{base_url}{ep_clean}"  # ベースURLとパスを結合して完全なURLを作成
+            tasks.append((task_idx, full_url, expected_str))  # (連番, フルURL, 期待文字列) をタスクリストに追加
+            task_idx += 1  # タスク連番を1繰り上げる
+
+    total_tasks = len(tasks)  # 全タスクの総数を取得
+    file_results = []  # ファイル保存用の結果リストを初期化
+
+    executor = ThreadPoolExecutor(max_workers=args.threads)  # 指定されたスレッド数でスレッドプールを作成
+    futures = [executor.submit(worker, task) for task in tasks]  # 全タスクをスレッドプールに投入しFutureオブジェクトを作成
+
+    def signal_handler(sig, frame):  # Ctrl+Cによる中断時に呼び出されるハンドラー関数を定義
+        print("\n[!] Interrupted.")  # 中断メッセージを出力
+        executor.shutdown(wait=False, cancel_futures=True)  # スレッドプール内のタスクを即座にキャンセルして停止
+        sys.exit(0)  # プログラムを終了
+
+    signal.signal(signal.SIGINT, signal_handler)  # SIGINT（Ctrl+C）受信時にシグナルハンドラーを実行するよう登録
+
+    try:  # 実行中の処理を開始
+        for future in futures:  # 投入したタスクの順序通りに結果を取り出すループ処理
+            idx, url, status = future.result()  # タスクの完了を待ち、結果（連番, URL, ステータス）を取得
+            
+            if status == "OK":  # ステータスが「OK」の場合のみ
+                file_results.append(f"{url} {status}")  # ファイル保存リストに「URL OK」を追加
+
+            # file_results.append(f"{url} {status}")  # 全結果（NOも含む）を保存したい場合は上の条件分岐を外しこの行を有効化
+
+            line_str = f"({idx}/{total_tasks}) {url} {status}"  # 画面表示用の文字列を作成（進捗状況含む）
+
+            if status == "OK":  # ステータスが「OK」の場合
+                print(f"{RED}{line_str}{RESET}")  # 行全体を赤色でターミナルに出力
+            else:  # ステータスが「NO」の場合
+                print(line_str)  # 通常色（標準色）でターミナルに出力
+
+    except KeyboardInterrupt:  # キーボード割り込みが発生した場合のエラーハンドリング
+        print("\n[!] Interrupted.")  # 中断メッセージを出力
+        executor.shutdown(wait=False, cancel_futures=True)  # スレッドプールを停止
+        sys.exit(0)  # プログラムを終了
+
+    if args.output:  # -o オプションで保存ファイル名が指定されている場合
+        with open(args.output, 'w', encoding='utf-8') as f:  # ファイルを書き込みモードで開く
+            for line in file_results:  # 保存対象の結果リストを1行ずつループ
+                f.write(line + "\n")  # ファイルに結果を書き込み（改行付与）
+        print(f"\nSaved to {args.output}")  # 保存完了メッセージを画面に出力
+
+if __name__ == "__main__":  # スクリプトが直接実行された場合（モジュールインポート時を除く）
+    main()  # main関数を実行して処理をスタート
+
+
+
+
+バージョン２ー２
+
+オプション,説明,初期値,例
+target_file,ターゲット（IP/ドメイン）が書かれたファイル（必須）,-,target.txt
+endpoint_file,エンドポイントと判定文字列が書かれたファイル（必須）,-,endpoint.txt
+"-o, --output",ヒットした結果（OK のみ）を保存するファイルパス,なし,-o result.txt
+"-t, --threads",同時実行するスレッド数（アクセスを並列化）,20,-t 50
+--timeout,1アクセスあたりのタイムアウト時間（秒）,3,--timeout 5
+--retry,失敗時の自動再試行回数,1,--retry 3
+
+
+よけいなものなし
+
+import argparse
+import sys
+import urllib.request
+import urllib.error
+import ssl
+import signal
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+RED = "\033[31m"
+RESET = "\033[0m"
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Endpoint checker")
+    parser.add_argument("target_file", help="Target list file")
+    parser.add_argument("endpoint_file", help="Endpoint list file")
+    parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads")
+    parser.add_argument("--timeout", type=int, default=3, help="Timeout in seconds")
+    parser.add_argument("--retry", type=int, default=1, help="Number of retries")
+    return parser.parse_args()
+
+def load_targets(filepath):
+    targets = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                targets.append(line)
+    return targets
+
+def load_endpoints(filepath):
+    endpoints = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    endpoints.append((parts[0], parts[1]))
+                elif len(parts) == 1:
+                    endpoints.append((parts[0], ""))
+    return endpoints
+
+def check_url(url, expected_str, timeout=3, retries=1):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    for attempt in range(retries):
+        start_time = time.time()
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                if response.status != 200:
+                    continue
+                body = response.read().decode('utf-8', errors='ignore')
+                if expected_str in body:
+                    return "OK", elapsed_ms
+                else:
+                    return "NO", elapsed_ms
+        except Exception:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            if attempt == retries - 1:
+                return "NO", elapsed_ms
+
+    return "NO", 0
+
+def worker(args):
+    idx, url, expected_str, timeout, retries = args
+    status, elapsed_ms = check_url(url, expected_str, timeout, retries)
+    return idx, url, status, elapsed_ms
+
+def main():
+    args = parse_args()
+
+    targets = load_targets(args.target_file)
+    endpoints = load_endpoints(args.endpoint_file)
+
+    tasks = []
+    task_idx = 1
+    for target in targets:
+        if target.startswith("http://") or target.startswith("https://"):
+            base_url = target
+        else:
+            base_url = f"https://{target}"
+
+        for ep, expected_str in endpoints:
+            ep_clean = ep if ep.startswith('/') else f"/{ep}"
+            full_url = f"{base_url}{ep_clean}"
+            tasks.append((task_idx, full_url, expected_str, args.timeout, args.retry))
+            task_idx += 1
+
+    total_tasks = len(tasks)
+    file_results = []
+
+    executor = ThreadPoolExecutor(max_workers=args.threads)
+    futures = [executor.submit(worker, task) for task in tasks]
+
+    def signal_handler(sig, frame):
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        for future in futures:
+            idx, url, status, elapsed_ms = future.result()
+            
+            if status == "OK":
+                file_results.append(f"{url} {status} [{elapsed_ms}ms]")
+
+            line_str = f"({idx}/{total_tasks}) {url} {status} [{elapsed_ms}ms]"
+
+            if status == "OK":
+                print(f"{RED}{line_str}{RESET}")
+            else:
+                print(line_str)
+
+    except KeyboardInterrupt:
+        executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(0)
+
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            for line in file_results:
+                f.write(line + "\n")
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+解説付き　AI
+import argparse  # コマンドライン引数を解析するための標準ライブラリをインポート
+import sys  # システム関連（スクリプト終了処理など）を操作するライブラリをインポート
+import urllib.request  # HTTP/HTTPSリクエストを送信するためのライブラリをインポート
+import urllib.error  # HTTP通信時のエラー処理を行うためのライブラリをインポート
+import ssl  # SSL/TLS証明書設定や制御を行うためのライブラリをインポート
+import signal  # Ctrl+Cなどのシグナル処理（割り込み検知）を行うライブラリをインポート
+import time  # 処理時間（レイテンシ）の計測を行うライブラリをインポート
+from concurrent.futures import ThreadPoolExecutor  # スレッドプールを使った並列処理を行うためのクラスをインポート
+
+RED = "\033[31m"  # ターミナルの文字色を「赤色」に変更するANSIエスケープシーケンスを定義
+RESET = "\033[0m"  # ターミナルの文字色を「通常（デフォルト）」に戻すANSIエスケープシーケンスを定義
+
+def parse_args():  # コマンドライン引数を処理する関数を定義
+    parser = argparse.ArgumentParser(description="Endpoint checker with advanced capabilities")  # パーサーオブジェクトを作成
+    parser.add_argument("target_file", help="Target list file")  # 第一引数：ターゲットリストファイルパスを追加
+    parser.add_argument("endpoint_file", help="Endpoint list file")  # 第二引数：エンドポイントリストファイルパスを追加
+    parser.add_argument("-o", "--output", help="Output file path")  # -oオプション：出力ファイル指定機能を追加
+    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads (default: 20)")  # -tオプション：スレッド数指定機能を追加
+    parser.add_argument("--timeout", type=int, default=3, help="Timeout in seconds (default: 3)")  # --timeoutオプション：タイムアウト秒数指定を追加
+    parser.add_argument("--retry", type=int, default=1, help="Number of retries on failure (default: 1)")  # --retryオプション：失敗時の再試行回数を追加
+    return parser.parse_args()  # 解析した引数オブジェクトを呼び出し元へ返す
+
+def load_targets(filepath):  # ターゲットリストファイルを読み込む関数を定義
+    targets = []  # ターゲットを格納するための空リストを初期化
+    with open(filepath, 'r', encoding='utf-8') as f:  # ファイルをUTF-8形式で読み込みモードで開く
+        for line in f:  # ファイルを1行ずつループ処理
+            line = line.strip()  # 行頭および行末の余分な改行や空白を除去
+            if line and not line.startswith('#'):  # 空行および「#」で始まるコメント行を除外
+                targets.append(line)  # 有効なターゲットをリストに追加
+    return targets  # 読み込んだターゲットのリストを返す
+
+def load_endpoints(filepath):  # エンドポイントリストファイルを読み込む関数を定義
+    endpoints = []  # エンドポイントと期待する文字列のペアを格納する空リストを初期化
+    with open(filepath, 'r', encoding='utf-8') as f:  # ファイルをUTF-8形式で読み込みモードで開く
+        for line in f:  # ファイルを1行ずつループ処理
+            line = line.strip()  # 行頭および行末の余分な改行や空白を除去
+            if line and not line.startswith('#'):  # 空行および「#」で始まるコメント行を除外
+                parts = line.split(maxsplit=1)  # スペースで「パス」と「文字列」の最大2つに分割
+                if len(parts) == 2:  # パスと判定文字列の両方が存在する場合
+                    endpoints.append((parts[0], parts[1]))  # タプル（パス, 期待文字列）としてリストに追加
+                elif len(parts) == 1:  # パスのみが指定されている場合
+                    endpoints.append((parts[0], ""))  # 期待文字列を空文字にしてリストに追加
+    return endpoints  # 読み込んだエンドポイントのリストを返す
+
+def check_url(url, expected_str, timeout=3, retries=1):  # 指定URLへアクセスし判定および計測を行う関数を定義
+    ctx = ssl.create_default_context()  # デフォルトのSSLコンテキストを作成
+    ctx.check_hostname = False  # SSL接続時にホスト名と証明書の一致チェックを無効化
+    ctx.verify_mode = ssl.CERT_NONE  # SSL証明書の検証を無効化
+
+    for attempt in range(retries):  # 指定された再試行回数分ループ処理
+        start_time = time.time()  # リクエスト開始時刻を記録
+        req = urllib.request.Request(  # リクエストオブジェクトを作成
+            url,  # アクセス先のURL
+            headers={'User-Agent': 'Mozilla/5.0'}  # User-Agentを固定で設定
+        )  # リクエスト定義の終了
+
+        try:  # 例外発生の可能性のあるアクセス処理を開始
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:  # 指定タイムアウトおよびSSL設定でURLを開く
+                elapsed_ms = int((time.time() - start_time) * 1000)  # 応答にかかった時間をミリ秒（ms）で計算
+                
+                if response.status != 200:  # HTTPステータスコードが200（正常）以外の場合
+                    continue  # 次の試行（リトライ）へスキップ
+                
+                body = response.read().decode('utf-8', errors='ignore')  # レスポンスボディをUTF-8でデコード
+                if expected_str in body:  # ボディ内に期待する文字列が含まれているか判定
+                    return "OK", elapsed_ms  # 文字列が含まれていれば「OK」と応答時間を返す
+                else:  # 文字列が含まれていない場合
+                    return "NO", elapsed_ms  # 「NO」と応答時間を返す
+        except Exception:  # エラー発生時
+            elapsed_ms = int((time.time() - start_time) * 1000)  # エラー発生までの時間を計算
+            if attempt == retries - 1:  # 最後の再試行でも失敗した場合
+                return "NO", elapsed_ms  # 最終的に「NO」と応答時間を返す
+
+    return "NO", 0  # すべての試行が失敗した場合は「NO, 0ms」を返す
+
+def worker(args):  # マルチスレッドで並行実行される作業用ワーカー関数を定義
+    idx, url, expected_str, timeout, retries = args  # 引数を解体して各パラメータを取得
+    status, elapsed_ms = check_url(url, expected_str, timeout, retries)  # check_urlを実行して判定結果と応答時間を取得
+    return idx, url, status, elapsed_ms  # タスク番号、URL、判定結果、応答時間を返す
+
+def main():  # メイン処理を行う関数を定義
+    args = parse_args()  # コマンドライン引数を解析して実行オプションを取得
+
+    targets = load_targets(args.target_file)  # ターゲットリストファイルを読み込む
+    endpoints = load_endpoints(args.endpoint_file)  # エンドポイントリストファイルを読み込む
+
+    tasks = []  # 実行する全タスクを格納する空リストを初期化
+    task_idx = 1  # タスクの連番（インデックス）を1から開始
+    for target in targets:  # ターゲットごとにループ処理
+        if target.startswith("http://"):  # ターゲットがすでに http:// で始まる場合
+            base_url = target  # そのままベースURLとして使用
+        elif target.startswith("https://"):  # ターゲットがすでに https:// で始まる場合
+            base_url = target  # そのままベースURLとして使用
+        else:  # プロトコルが指定されていない場合
+            base_url = f"https://{target}"  # デフォルトで https:// を付与
+
+        for ep, expected_str in endpoints:  # 各ターゲットに対して全エンドポイントをループ処理
+            ep_clean = ep if ep.startswith('/') else f"/{ep}"  # パスの先頭に「/」がない場合は補完
+            full_url = f"{base_url}{ep_clean}"  # ベースURLとパスを結合して完全なURLを作成
+            tasks.append((task_idx, full_url, expected_str, args.timeout, args.retry))  # タスク情報リストに追加
+            task_idx += 1  # タスク連番を1繰り上げる
+
+    total_tasks = len(tasks)  # 全タスクの総数を取得
+    file_results = []  # ファイル保存用の結果リストを初期化
+
+    executor = ThreadPoolExecutor(max_workers=args.threads)  # 指定されたスレッド数でスレッドプールを作成
+    futures = [executor.submit(worker, task) for task in tasks]  # 全タスクをスレッドプールに投入
+
+    def signal_handler(sig, frame):  # Ctrl+Cによる中断時に呼び出されるハンドラー関数を定義
+        print("\n[!] Interrupted.")  # 中断メッセージを出力
+        executor.shutdown(wait=False, cancel_futures=True)  # スレッドプールを停止
+        sys.exit(0)  # プログラムを終了
+
+    signal.signal(signal.SIGINT, signal_handler)  # SIGINT（Ctrl+C）受信時にシグナルハンドラーを実行するよう登録
+
+    try:  # 実行中の処理を開始
+        for future in futures:  # 投入したタスクの順序通りに結果を取り出すループ処理
+            idx, url, status, elapsed_ms = future.result()  # タスクの完了を待ち結果を取得
+            
+            if status == "OK":  # ステータスが「OK」の場合のみ
+                file_results.append(f"{url} {status} [{elapsed_ms}ms]")  # ファイル保存リストに「URL OK [時間]」を追加
+
+            line_str = f"({idx}/{total_tasks}) {url} {status} [{elapsed_ms}ms]"  # レスポンス時間を含む表示用文字列を作成
+
+            if status == "OK":  # ステータスが「OK」の場合
+                print(f"{RED}{line_str}{RESET}")  # 行全体を赤色でターミナルに出力
+            else:  # ステータスが「NO」の場合
+                print(line_str)  # 通常色（標準色）でターミナルに出力
+
+    except KeyboardInterrupt:  # キーボード割り込みが発生した場合のエラーハンドリング
+        print("\n[!] Interrupted.")  # 中断メッセージを出力
+        executor.shutdown(wait=False, cancel_futures=True)  # スレッドプールを停止
+        sys.exit(0)  # プログラムを終了
+
+    if args.output:  # -o オプションで保存ファイル名が指定されている場合
+        with open(args.output, 'w', encoding='utf-8') as f:  # ファイルを書き込みモードで開く
+            for line in file_results:  # 保存対象の結果リストを1行ずつループ
+                f.write(line + "\n")  # ファイルに結果を書き込み
+        print(f"\nSaved to {args.output}")  # 保存完了メッセージを画面に出力
+
+if __name__ == "__main__":  # スクリプトが直接実行された場合
+    main()  # main関数を実行して処理をスタート
+
+
+
+シェルスクリプト
+
+シェルスクリプトの仕組み・解説
+引数の解析: 第一引数にターゲット一覧、第二引数にエンドポイント一覧を受け取ります。-o や -t などの追加オプションをループで処理します。
+
+タスクの事前構築: ファイルから有効な行を読み込み、1/18 などの番号や完全なURLを組み立てて一時タスクファイル（mktemp）に保存します。
+
+xargs による並行処理: xargs -P [スレッド数] を使うことで、バックグラウンドで複数アクセス（curl）を高速に実行します。
+
+ソートによる順番の保持: 各アクセス結果を一度一時ファイルへ書き出し、最後に sort -n を使って元の連番（1, 2, 3...）通りに整列してから画面出力およびファイル保存を行います。
+
+
+ソースコード
+
+#!/usr/bin/env bash
+
+RED='\033[31m'
+RESET='\033[0m'
+
+THREADS=20
+TIMEOUT=3
+RETRY=1
+OUTPUT=""
+
+usage() {
+    echo "Usage: $0 <target_file> <endpoint_file> [-o output_file] [-t threads] [--timeout seconds] [--retry retries]"
+    exit 1
+}
+
+if [ "$#" -lt 2 ]; then
+    usage
+fi
+
+TARGET_FILE="$1"
+ENDPOINT_FILE="$2"
+shift 2
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o|--output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        -t|--threads)
+            THREADS="$2"
+            shift 2
+            ;;
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        --retry)
+            RETRY="$2"
+            shift 2
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+if [ ! -f "$TARGET_FILE" ] || [ ! -f "$ENDPOINT_FILE" ]; then
+    echo "Error: File not found."
+    exit 1
+fi
+
+check_single() {
+    local idx="$1"
+    local total="$2"
+    local url="$3"
+    local expected="$4"
+    local timeout="$5"
+    local retry="$6"
+    local raw_out="$7"
+
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')
+
+    local body
+    local status="NO"
+
+    for ((i=0; i<retry; i++)); do
+        body=$(curl -k -s -L --max-time "$timeout" -A "Mozilla/5.0" "$url" 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            if [ -n "$expected" ]; then
+                if echo "$body" | grep -q "$expected"; then
+                    status="OK"
+                    break
+                fi
+            else
+                status="OK"
+                break
+            fi
+        fi
+    done
+
+    local end_time
+    end_time=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')
+    local elapsed=$((end_time - start_time))
+
+    # ソート用に先頭にタブ区切りで数字(idx)を付与して出力
+    echo -e "${idx}\t(${idx}/${total}) ${url} ${status} [${elapsed}ms]\t${url}\t${status}\t[${elapsed}ms]" >> "$raw_out"
+}
+
+export -f check_single
+
+TMP_TASKS=$(mktemp)
+RAW_OUT=$(mktemp)
+
+task_idx=1
+while IFS= read -r target || [ -n "$target" ]; do
+    [ -z "$target" ] && continue
+    [[ "$target" =~ ^# ]] && continue
+
+    if [[ "$target" =~ ^http:// ]] || [[ "$target" =~ ^https:// ]]; then
+        base_url="$target"
+    else
+        base_url="https://$target"
+    fi
+
+    while IFS= read -r ep_line || [ -n "$ep_line" ]; do
+        [ -z "$ep_line" ] && continue
+        [[ "$ep_line" =~ ^# ]] && continue
+
+        ep=$(echo "$ep_line" | awk '{print $1}')
+        exp=$(echo "$ep_line" | cut -d' ' -f2-)
+        [ "$ep" = "$exp" ] && exp=""
+
+        if [[ "$ep" != /* ]]; then
+            ep="/$ep"
+        fi
+
+        full_url="${base_url}${ep}"
+        echo "$task_idx $full_url $exp" >> "$TMP_TASKS"
+        task_idx=$((task_idx + 1))
+    done < "$ENDPOINT_FILE"
+done < "$TARGET_FILE"
+
+TOTAL_TASKS=$((task_idx - 1))
+
+if [ "$TOTAL_TASKS" -eq 0 ]; then
+    rm -f "$TMP_TASKS" "$RAW_OUT"
+    exit 0
+fi
+
+# 並列処理の実行
+cat "$TMP_TASKS" | awk -v total="$TOTAL_TASKS" -v t="$TIMEOUT" -v r="$RETRY" -v raw="$RAW_OUT" '{print $1, total, $2, $3, t, r, raw}' | \
+xargs -P "$THREADS" -n 7 bash -c 'check_single "$1" "$2" "$3" "$4" "$5" "$6" "$7"' _
+
+if [ -n "$OUTPUT" ]; then
+    > "$OUTPUT"
+fi
+
+# 結果を番号順（1->2->3...）にソートして画面表示およびファイル保存
+sort -n -k1,1 "$RAW_OUT" | while IFS=$'\t' read -r num line url status ms; do
+    if [ "$status" = "OK" ]; then
+        echo -e "${RED}${line}${RESET}"
+        if [ -n "$OUTPUT" ]; then
+            echo "$url $status $ms" >> "$OUTPUT"
+        fi
+    else
+        echo "$line"
+    fi
+done
+
+rm -f "$TMP_TASKS" "$RAW_OUT"
+
+
+解説付き
+
+#!/usr/bin/env bash  # PATHからbashを自動検索して実行するためのシバン
+
+RED='\033[31m'  # コンソール出力用の赤色エスケープシーケンスを定義
+RESET='\033[0m'  # コンソール出力を標準色に戻すエスケープシーケンスを定義
+
+THREADS=20  # 同時実行スレッド数のデフォルト値を20に設定
+TIMEOUT=3  # 1リクエストあたりのタイムアウト秒数のデフォルト値を3に設定
+RETRY=1  # アクセス失敗時の再試行回数のデフォルト値を1に設定
+OUTPUT=""  # 結果保存用ファイルパスの初期値を空に設定
+
+usage() {  # 使い方（ヘルプメッセージ）を表示して終了する関数を定義
+    echo "Usage: $0 <target_file> <endpoint_file> [-o output_file] [-t threads] [--timeout seconds] [--retry retries]"  # 使用方法を出力
+    exit 1  # 異常終了ステータス1でスクリプトを終了
+}  # 関数定義の終了
+
+if [ "$#" -lt 2 ]; then  # 渡された引数が2個未満の場合の判定
+    usage  # 必須引数が足りないためusage関数を呼び出し
+fi  # 条件分岐の終了
+
+TARGET_FILE="$1"  # 第1引数をターゲットファイル名として取得
+ENDPOINT_FILE="$2"  # 第2引数をエンドポイントファイル名として取得
+shift 2  # 取得済みの第1・第2引数をシフトして除外
+
+while [ "$#" -gt 0 ]; do  # 残りの引数が存在する間ループ処理を実行
+    case "$1" in  # 現在の第1引数の文字列で条件分岐
+        -o|--output)  # -o または --output オプションの場合
+            OUTPUT="$2"  # 次の引数を保存ファイル名として取得
+            shift 2  # オプション名と値の2つ分をシフト
+            ;;  # case文のブロック終了
+        -t|--threads)  # -t または --threads オプションの場合
+            THREADS="$2"  # 次の引数をスレッド数として取得
+            shift 2  # オプション名と値の2つ分をシフト
+            ;;  # case文のブロック終了
+        --timeout)  # --timeout オプションの場合
+            TIMEOUT="$2"  # 次の引数をタイムアウト秒数として取得
+            shift 2  # オプション名と値の2つ分をシフト
+            ;;  # case文のブロック終了
+        --retry)  # --retry オプションの場合
+            RETRY="$2"  # 次の引数を再試行回数として取得
+            shift 2  # オプション名と値の2つ分をシフト
+            ;;  # case文のブロック終了
+        *)  # 未知のオプションが指定された場合
+            usage  # usage関数を呼び出して終了
+            ;;  # case文のブロック終了
+    esac  # case文の終了
+done  # 引数解析ループの終了
+
+if [ ! -f "$TARGET_FILE" ] || [ ! -f "$ENDPOINT_FILE" ]; then  # 指定されたファイルが存在しない場合の判定
+    echo "Error: File not found."  # エラーメッセージを画面に出力
+    exit 1  # ステータス1でスクリプトを終了
+fi  # 条件分岐の終了
+
+check_single() {  # 単一のURLに対するアクセスと判定を行う関数を定義
+    local idx="$1"  # 第1引数：タスク番号
+    local total="$2"  # 第2引数：全タスク数
+    local url="$3"  # 第3引数：検証対象URL
+    local expected="$4"  # 第4引数：期待するレスポンス文字列
+    local timeout="$5"  # 第5引数：タイムアウト時間
+    local retry="$6"  # 第6引数：リトライ回数
+    local raw_out="$7"  # 第7引数：一時出力ファイルパス
+
+    local start_time  # 開始時間を保持するローカル変数を宣言
+    start_time=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')  # 開始時刻をミリ秒単位で取得
+
+    local body  # レスポンスボディを保持するローカル変数を宣言
+    local status="NO"  # 判定ステータスの初期値を「NO」に設定
+
+    for ((i=0; i<retry; i++)); do  # 指定されたリトライ回数分ループ
+        body=$(curl -k -s -L --max-time "$timeout" -A "Mozilla/5.0" "$url" 2>/dev/null)  # curlで安全にリクエストを送信し結果を取得
+        if [ $? -eq 0 ]; then  # curlコマンドが正常（HTTP通信成功）に終了した場合
+            if [ -n "$expected" ]; then  # 期待する文字列が指定されている場合の判定
+                if echo "$body" | grep -q "$expected"; then  # レスポンス内に期待する文字列が含まれているか判定
+                    status="OK"  # 文字列が含まれていれば「OK」に設定
+                    break  # ループを抜ける
+                fi  # 条件分岐の終了
+            else  # 期待する文字列が空指定の場合
+                status="OK"  # 通信成功のみで「OK」に設定
+                break  # ループを抜ける
+            fi  # 条件分岐の終了
+        fi  # 条件分岐の終了
+    done  # リトライループの終了
+
+    local end_time  # 終了時間を保持するローカル変数を宣言
+    end_time=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')  # 終了時刻をミリ秒単位で取得
+    local elapsed=$((end_time - start_time))  # 処理にかかったレスポンス時間（ミリ秒）を計算
+
+    echo -e "${idx}\t(${idx}/${total}) ${url} ${status} [${elapsed}ms]\t${url}\t${status}\t[${elapsed}ms]" >> "$raw_out"  # 後でソートするためにインデックス付きで一時ファイルに追記
+}  # 関数定義の終了
+
+export -f check_single  # xargsから関数を呼び出せるように環境変数としてエクスポート
+
+TMP_TASKS=$(mktemp)  # タスク一覧を保持するための一時ファイルを作成
+RAW_OUT=$(mktemp)  # 未ソートの実行結果を保持するための一時ファイルを作成
+
+task_idx=1  # タスクの連番インデックスを1で初期化
+while IFS= read -r target || [ -n "$target" ]; do  # ターゲットファイルを1行ずつ読み込むループ
+    [ -z "$target" ] && continue  # 空行の場合はスキップ
+    [[ "$target" =~ ^# ]] && continue  # 「#」で始まるコメント行はスキップ
+
+    if [[ "$target" =~ ^http:// ]] || [[ "$target" =~ ^https:// ]]; then  # プロトコルが明示されているかの判定
+        base_url="$target"  # 指定されたプロトコル付きURLをそのまま使用
+    else  # プロトコルが省略されている場合
+        base_url="https://$target"  # デフォルトで https:// を付与
+    fi  # 条件分岐の終了
+
+    while IFS= read -r ep_line || [ -n "$ep_line" ]; do  # エンドポイントファイルを1行ずつ読み込むループ
+        [ -z "$ep_line" ] && continue  # 空行の場合はスキップ
+        [[ "$ep_line" =~ ^# ]] && continue  # 「#」で始まるコメント行はスキップ
+
+        ep=$(echo "$ep_line" | awk '{print $1}')  # 1列目のエンドポイントパスを取得
+        exp=$(echo "$ep_line" | cut -d' ' -f2-)  # 2列目以降の期待する文字列を取得
+        [ "$ep" = "$exp" ] && exp=""  # パスのみで期待文字列がない場合は空文字に修正
+
+        if [[ "$ep" != /* ]]; then  # パスの先頭が「/」で始まっていない場合の判定
+            ep="/$ep"  # 先頭に「/」を補完
+        fi  # 条件分岐の終了
+
+        full_url="${base_url}${ep}"  # ベースURLとパスを結合して完全なURLを構成
+        echo "$task_idx $full_url $exp" >> "$TMP_TASKS"  # タスク情報を一時タスクファイルへ追加
+        task_idx=$((task_idx + 1))  # タスク番号をインクリメント
+    done < "$ENDPOINT_FILE"  # エンドポイントファイルから入力
+done < "$TARGET_FILE"  # ターゲットファイルから入力
+
+TOTAL_TASKS=$((task_idx - 1))  # 生成された全タスクの総数を計算
+
+if [ "$TOTAL_TASKS" -eq 0 ]; then  # 実行すべきタスクがゼロの場合
+    rm -f "$TMP_TASKS" "$RAW_OUT"  # 一時ファイルを削除
+    exit 0  # 正常終了
+fi  # 条件分岐の終了
+
+cat "$TMP_TASKS" | awk -v total="$TOTAL_TASKS" -v t="$TIMEOUT" -v r="$RETRY" -v raw="$RAW_OUT" '{print $1, total, $2, $3, t, r, raw}' | \
+xargs -P "$THREADS" -n 7 bash -c 'check_single "$1" "$2" "$3" "$4" "$5" "$6" "$7"' _  # xargsを使って並行スレッドでチェック処理を一括実行
+
+if [ -n "$OUTPUT" ]; then  # 出力ファイルが指定されている場合
+    > "$OUTPUT"  # 出力ファイルを空で初期化（既存の中身をクリア）
+fi  # 条件分岐の終了
+
+sort -n -k1,1 "$RAW_OUT" | while IFS=$'\t' read -r num line url status ms; do  # 1列目の番号順に数値ソートして1行ずつループ処理
+    if [ "$status" = "OK" ]; then  # ステータスがOKの場合の判定
+        echo -e "${RED}${line}${RESET}"  # 画面に赤色で行全体を出力
+        if [ -n "$OUTPUT" ]; then  # 出力ファイル指定がある場合
+            echo "$url $status $ms" >> "$OUTPUT"  # OKの結果のみをファイルへ書き込み
+        fi  # 条件分岐の終了
+    else  # ステータスがNOの場合
+        echo "$line"  # 画面に通常色で行全体を出力
+    fi  # 条件分岐の終了
+done  # ソート結果ループの終了
+
+rm -f "$TMP_TASKS" "$RAW_OUT"  # 使用した一時ファイルをすべて削除してクリーンアップ
