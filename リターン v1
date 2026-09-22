@@ -1,0 +1,228 @@
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $false, Position = 0)]
+    [string]$TargetFolder,
+
+    # 除外する拡張子の配列（例: -ExcludeExtension ".png", ".zip", ".ps1"）
+    [Parameter(Mandatory = $false)]
+    [string[]]$ExcludeExtension,
+
+    # 対象とする拡張子の配列（例: -IncludeExtension ".sh", ".txt", ".py"）
+    [Parameter(Mandatory = $false)]
+    [string[]]$IncludeExtension,
+
+    # 実際の書き換えを行わない事前確認モード
+    [Parameter(Mandatory = $false)]
+    [switch]$WhatIf,
+
+    # ヘルプ表示フラグ（これがないと -Help でエラーになります）
+    [Parameter(Mandatory = $false)]
+    [switch]$Help
+)
+
+# --------------------------------------------------
+# 0. ヘルプ表示処理
+# --------------------------------------------------
+if ($Help) {
+    Write-Host ""
+    Write-Host "==================================================" -ForegroundColor Cyan
+    Write-Host "  📖 キャリッジリターン（CR）削除ツール - HELP" -ForegroundColor Cyan
+    Write-Host "==================================================" -ForegroundColor Cyan
+    Write-Host " [概要]"
+    Write-Host "   Windowsのテキストファイルに含まれるキャリッジリターン（`\r）を削除し、"
+    Write-Host "   Linux環境でエラーが出ない LF 改行コードに変換します。"
+    Write-Host ""
+    Write-Host " [構文]"
+    Write-Host "   .\test2.ps1 [[-TargetFolder] <パス>] [-ExcludeExtension <拡張子...>]"
+    Write-Host "                [-IncludeExtension <拡張子...>] [-WhatIf] [-Help]"
+    Write-Host ""
+    Write-Host " [パラメータ]"
+    Write-Host "   -TargetFolder       : 処理対象のフォルダパス。省略時は実行スクリプト直下のファイルのみ対象。"
+    Write-Host "   -ExcludeExtension   : 処理から除外する拡張子を指定（例: .png, .exe, .zip, .ps1）。"
+    Write-Host "   -IncludeExtension   : 処理対象にする拡張子を限定（例: .sh, .env, .txt）。"
+    Write-Host "   -WhatIf             : 実際の書き換えを行わず、どのファイルが変換対象になるかテスト実行。"
+    Write-Host "   -Help               : このヘルプメッセージを表示します。"
+    Write-Host ""
+    Write-Host " [実行例]"
+    Write-Host "   1. 自フォルダ直下のみ実行:"
+    Write-Host "      .\test2.ps1"
+    Write-Host ""
+    Write-Host "   2. 画像やZIPを除外して指定フォルダ配下を一括処理:"
+    Write-Host "      .\test2.ps1 -TargetFolder 'C:\MyProject' -ExcludeExtension '.png', '.zip'"
+    Write-Host ""
+    Write-Host "   3. 変換前の事前確認（テスト）:"
+    Write-Host "      .\test2.ps1 -TargetFolder 'C:\MyProject' -WhatIf"
+    Write-Host "==================================================" -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
+}
+
+# --------------------------------------------------
+# 1. 対象フォルダの決定処理
+# --------------------------------------------------
+$ScriptPath = $MyInvocation.MyCommand.Path
+$ScriptDirectory = Split-Path -Parent $ScriptPath
+
+if ([string]::IsNullOrWhitespace($TargetFolder)) {
+    # 引数なし：スクリプトが存在するフォルダ（サブフォルダは含まない）
+    $FolderPath = $ScriptDirectory
+    $Files = Get-ChildItem -Path $FolderPath -File
+    # 自分自身を除外
+    $Files = $Files | Where-Object { $_.FullName -ne $ScriptPath }
+} else {
+    # 引数あり：指定されたフォルダ（サブフォルダ含む配下すべて）
+    if (-not (Test-Path -Path $TargetFolder -PathType Container)) {
+        Write-Host "[ERROR] 指定されたフォルダが存在しません: $TargetFolder" -ForegroundColor Red
+        exit 1
+    }
+    $FolderPath = (Get-Item -Path $TargetFolder).FullName
+    $Files = Get-ChildItem -Path $FolderPath -File -Recurse
+}
+
+# --------------------------------------------------
+# 2. 拡張子フィルタリング処理
+# --------------------------------------------------
+if ($ExcludeExtension) {
+    $ExcludeExtension = $ExcludeExtension | ForEach-Object { if ($_ -notmatch "^\.") { ".$_" } else { $_ } } | ForEach-Object { $_.ToLower() }
+}
+if ($IncludeExtension) {
+    $IncludeExtension = $IncludeExtension | ForEach-Object { if ($_ -notmatch "^\.") { ".$_" } else { $_ } } | ForEach-Object { $_.ToLower() }
+}
+
+$FilteredFiles = @()
+foreach ($f in $Files) {
+    $ext = $f.Extension.ToLower()
+
+    if ($IncludeExtension -and ($ext -notin $IncludeExtension)) {
+        continue
+    }
+
+    if ($ExcludeExtension -and ($ext -in $ExcludeExtension)) {
+        continue
+    }
+
+    $FilteredFiles += $f
+}
+
+$Files = $FilteredFiles
+
+# --------------------------------------------------
+# 3. 初期ヘッダー表示
+# --------------------------------------------------
+Write-Host ""
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "  📂 キャリッジリターン（CR）検出・削除ツール" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host " [対象フォルダ]     : $FolderPath" -ForegroundColor Yellow
+
+if ($IncludeExtension) {
+    Write-Host " [対象拡張子]       : $($IncludeExtension -join ', ')" -ForegroundColor Gray
+}
+if ($ExcludeExtension) {
+    Write-Host " [除外拡張子]       : $($ExcludeExtension -join ', ')" -ForegroundColor Gray
+}
+if ($WhatIf) {
+    Write-Host " [実行モード]       : ⚠️ Dry-Run（事前確認のみ／書き換えは行いません）" -ForegroundColor Yellow
+}
+Write-Host ""
+
+if ($Files.Count -eq 0) {
+    Write-Host " フィルタ条件に一致するファイルが見つかりませんでした。" -ForegroundColor DarkGray
+    Write-Host ""
+    exit 0
+}
+
+# --------------------------------------------------
+# 4. 点検（チェック）フェーズ
+# --------------------------------------------------
+Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+Write-Host " 🔍 ファイルの改行コードチェック" -ForegroundColor Cyan
+Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+
+$TargetFilesToFix = @()
+
+foreach ($file in $Files) {
+    $relativePath = $file.FullName.Replace($FolderPath, "").TrimStart("\")
+    
+    # バイト単位で 0x0D (CR) の有無を直接チェック
+    $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+    $hasCR = $bytes -contains 0x0D
+
+    if ($hasCR) {
+        Write-Host " [ 要変換 ] " -NoNewline -ForegroundColor Red
+        Write-Host "$relativePath " -NoNewline
+        Write-Host "(CRが含まれています)" -ForegroundColor Red
+        $TargetFilesToFix += $file
+    } else {
+        Write-Host " [ 正常   ] " -NoNewline -ForegroundColor Green
+        Write-Host "$relativePath " -NoNewline
+        Write-Host "(LFまたはCRなし)" -ForegroundColor DarkGray
+    }
+}
+
+# --------------------------------------------------
+# 5. 変更（変換）フェーズ
+# --------------------------------------------------
+Write-Host ""
+Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+Write-Host " 🛠️ 改行コード変換処理（CRLF ➔ LF）" -ForegroundColor Cyan
+Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+
+$convertedCount = 0
+$skippedCount = $Files.Count - $TargetFilesToFix.Count
+
+if ($TargetFilesToFix.Count -eq 0) {
+    Write-Host " 変換が必要なファイルはありませんでした。" -ForegroundColor DarkGray
+} else {
+    foreach ($file in $TargetFilesToFix) {
+        $relativePath = $file.FullName.Replace($FolderPath, "").TrimStart("\")
+        
+        if ($WhatIf) {
+            Write-Host " [ スキップ ] " -NoNewline -ForegroundColor Yellow
+            Write-Host "$relativePath ➔ " -NoNewline
+            Write-Host "（WhatIfのため書き換えなし）" -ForegroundColor DarkGray
+            $convertedCount++
+            continue
+        }
+
+        try {
+            # バイト配列から 0x0D (CR) のみを除去して書き出す
+            $rawBytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            $cleanBytes = [System.Collections.Generic.List[byte]]::new()
+            
+            foreach ($b in $rawBytes) {
+                if ($b -ne 0x0D) {
+                    $cleanBytes.Add($b)
+                }
+            }
+            
+            [System.IO.File]::WriteAllBytes($file.FullName, $cleanBytes.ToArray())
+
+            Write-Host " [ 完了   ] " -NoNewline -ForegroundColor Cyan
+            Write-Host "$relativePath ➔ " -NoNewline
+            Write-Host "CR削除完了" -ForegroundColor Green
+            $convertedCount++
+        }
+        catch {
+            Write-Host " [ 失敗   ] " -NoNewline -ForegroundColor Red
+            Write-Host "$relativePath ➔ エラー: $_" -ForegroundColor Red
+        }
+    }
+}
+
+# --------------------------------------------------
+# 6. 集計結果表示
+# --------------------------------------------------
+Write-Host ""
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host " 📊 処理結果サマリー" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Cyan
+if ($WhatIf) {
+    Write-Host "  ・変換予定ファイル数 : $convertedCount 件" -ForegroundColor Yellow
+} else {
+    Write-Host "  ・変換したファイル数 : $convertedCount 件" -ForegroundColor Green
+}
+Write-Host "  ・変更なしファイル数 : $skippedCount 件" -ForegroundColor Gray
+Write-Host "  ・チェック対象ファイル数 : $($Files.Count) 件"
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host ""
