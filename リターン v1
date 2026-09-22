@@ -3,11 +3,11 @@ param (
     [Parameter(Mandatory = $false, Position = 0)]
     [string]$TargetFolder,
 
-    # 除外する拡張子の配列（例: -ExcludeExtension ".png", ".zip", ".ps1"）
+    # 除外する拡張子の配列（例: -ExcludeExtension ".png", ".zip"）
     [Parameter(Mandatory = $false)]
     [string[]]$ExcludeExtension,
 
-    # 対象とする拡張子の配列（例: -IncludeExtension ".sh", ".txt", ".py"）
+    # 対象とする拡張子の配列（例: -IncludeExtension ".sh", ".txt", ".ps1"）
     [Parameter(Mandatory = $false)]
     [string[]]$IncludeExtension,
 
@@ -15,7 +15,7 @@ param (
     [Parameter(Mandatory = $false)]
     [switch]$WhatIf,
 
-    # ヘルプ表示フラグ（これがないと -Help でエラーになります）
+    # ヘルプ表示フラグ
     [Parameter(Mandatory = $false)]
     [switch]$Help
 )
@@ -38,20 +38,10 @@ if ($Help) {
     Write-Host ""
     Write-Host " [パラメータ]"
     Write-Host "   -TargetFolder       : 処理対象のフォルダパス。省略時は実行スクリプト直下のファイルのみ対象。"
-    Write-Host "   -ExcludeExtension   : 処理から除外する拡張子を指定（例: .png, .exe, .zip, .ps1）。"
-    Write-Host "   -IncludeExtension   : 処理対象にする拡張子を限定（例: .sh, .env, .txt）。"
+    Write-Host "   -ExcludeExtension   : 処理から除外する拡張子を指定（例: .png, .exe, .zip）。"
+    Write-Host "   -IncludeExtension   : 処理対象にする拡張子を限定（例: .sh, .env, .ps1）。"
     Write-Host "   -WhatIf             : 実際の書き換えを行わず、どのファイルが変換対象になるかテスト実行。"
     Write-Host "   -Help               : このヘルプメッセージを表示します。"
-    Write-Host ""
-    Write-Host " [実行例]"
-    Write-Host "   1. 自フォルダ直下のみ実行:"
-    Write-Host "      .\test2.ps1"
-    Write-Host ""
-    Write-Host "   2. 画像やZIPを除外して指定フォルダ配下を一括処理:"
-    Write-Host "      .\test2.ps1 -TargetFolder 'C:\MyProject' -ExcludeExtension '.png', '.zip'"
-    Write-Host ""
-    Write-Host "   3. 変換前の事前確認（テスト）:"
-    Write-Host "      .\test2.ps1 -TargetFolder 'C:\MyProject' -WhatIf"
     Write-Host "==================================================" -ForegroundColor Cyan
     Write-Host ""
     exit 0
@@ -67,8 +57,6 @@ if ([string]::IsNullOrWhitespace($TargetFolder)) {
     # 引数なし：スクリプトが存在するフォルダ（サブフォルダは含まない）
     $FolderPath = $ScriptDirectory
     $Files = Get-ChildItem -Path $FolderPath -File
-    # 自分自身を除外
-    $Files = $Files | Where-Object { $_.FullName -ne $ScriptPath }
 } else {
     # 引数あり：指定されたフォルダ（サブフォルダ含む配下すべて）
     if (-not (Test-Path -Path $TargetFolder -PathType Container)) {
@@ -80,7 +68,12 @@ if ([string]::IsNullOrWhitespace($TargetFolder)) {
 }
 
 # --------------------------------------------------
-# 2. 拡張子フィルタリング処理
+# 2. 自分自身の完全除外（引数の有無に関わらず適用）
+# --------------------------------------------------
+$Files = $Files | Where-Object { $_.FullName -ne $ScriptPath }
+
+# --------------------------------------------------
+# 3. 拡張子フィルタリング処理
 # --------------------------------------------------
 if ($ExcludeExtension) {
     $ExcludeExtension = $ExcludeExtension | ForEach-Object { if ($_ -notmatch "^\.") { ".$_" } else { $_ } } | ForEach-Object { $_.ToLower() }
@@ -107,7 +100,7 @@ foreach ($f in $Files) {
 $Files = $FilteredFiles
 
 # --------------------------------------------------
-# 3. 初期ヘッダー表示
+# 4. 初期ヘッダー表示
 # --------------------------------------------------
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -133,7 +126,7 @@ if ($Files.Count -eq 0) {
 }
 
 # --------------------------------------------------
-# 4. 点検（チェック）フェーズ
+# 5. 点検（チェック）フェーズ
 # --------------------------------------------------
 Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
 Write-Host " 🔍 ファイルの改行コードチェック" -ForegroundColor Cyan
@@ -161,7 +154,7 @@ foreach ($file in $Files) {
 }
 
 # --------------------------------------------------
-# 5. 変更（変換）フェーズ
+# 6. 変更（変換）フェーズ
 # --------------------------------------------------
 Write-Host ""
 Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
@@ -211,7 +204,7 @@ if ($TargetFilesToFix.Count -eq 0) {
 }
 
 # --------------------------------------------------
-# 6. 集計結果表示
+# 7. 集計結果表示
 # --------------------------------------------------
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -226,3 +219,112 @@ Write-Host "  ・変更なしファイル数 : $skippedCount 件" -ForegroundCol
 Write-Host "  ・チェック対象ファイル数 : $($Files.Count) 件"
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
+
+
+
+---
+
+# 改行コード（CR）一括削除ツール (`test2.ps1`)
+
+## 📌 概要
+
+Windows環境で作成・編集したテキストファイル（`.sh`, `.env`, `.py`, `.txt` など）に含まれる**キャリッジリターン（CR / `\r`）を一括で検知・削除**し、Linux/Mac環境で安全に動作する改行コード（**LF**）に変換するPowerShellスクリプトです。
+
+ファイル全体の文字コードを崩すことなく、バイトレベルで `CR` のみを取り除いて保存するため、文字化けやファイル破壊のリスクを抑えて安全に変換を行います。
+
+---
+
+## ✨ 主な特徴
+
+* **バイトレベル処理**: エンコーディング（UTF-8, Shift_JISなど）の認識違いによる文字化けが発生しません。
+* **自己保護機能**: 実行中のスクリプト自身は自動で処理対象から除外されます。
+* **事前確認モード（Dry-Run）**: 実際にファイルを書き換えずに、どのファイルが変換対象になるかチェックできます。
+* **柔軟なフィルタリング**: 指定フォルダ配下（サブフォルダ含む）の一括処理や、拡張子の含める/除外する指定が可能です。
+
+---
+
+
+
+## 🚀 使い方とオプション
+
+### 基本構文
+
+```powershell
+.\test2.ps1 [[-TargetFolder] <パス>] [-ExcludeExtension <拡張子...>] [-IncludeExtension <拡張子...>] [-WhatIf] [-Help]
+
+```
+
+---
+
+### オプション一覧
+
+| オプション | 記述形式 | 説明 |
+| --- | --- | --- |
+| **`-TargetFolder`** | `[string]` | **対象フォルダのパス。**<br>
+
+<br>指定するとサブフォルダ配下も再帰的に検索します。<br>
+
+<br>※省略時は**スクリプトが存在するフォルダ直下のみ**を対象とします。 |
+| **`-ExcludeExtension`** | `[string[]]` | **処理から除外する拡張子。**<br>
+
+<br>画像・圧縮ファイルなど、バイナリファイルの破損を防ぎたい場合に使用します。<br>
+
+<br>例: `-ExcludeExtension ".png", ".jpg", ".zip", ".exe"` |
+| **`-IncludeExtension`** | `[string[]]` | **処理対象にする拡張子を限定。**<br>
+
+<br>特定のテキストファイルのみに絞り込んで処理したい場合に使用します。<br>
+
+<br>例: `-IncludeExtension ".sh", ".env", ".py"` |
+| **`-WhatIf`** | `[switch]` | **テスト実行モード（Dry-Run）。**<br>
+
+<br>ファイルを書き換えずに、変換が必要なファイルの一覧のみを表示します。 |
+| **`-Help`** | `[switch]` | **ヘルプメッセージを表示。**<br>
+
+<br>スクリプトの概要やオプションの使い方を表示して終了します。 |
+
+---
+
+## 💡 実行例
+
+#### 1. スクリプトがあるフォルダ直下のみ処理する（基本）
+
+```powershell
+.\test2.ps1
+
+```
+
+#### 2. 事前確認（テスト実行）をする
+
+ファイルを書き換えずに、変換対象のファイルだけをチェックします。
+
+```powershell
+.\test2.ps1 -TargetFolder "C:\MyProject" -WhatIf
+
+```
+
+#### 3. 画像やZIPなどのバイナリファイルを除外して一括変換する
+
+```powershell
+.\test2.ps1 -TargetFolder "C:\MyProject" -ExcludeExtension ".png", ".jpg", ".zip", ".exe"
+
+```
+
+#### 4. シェルスクリプトと環境変数ファイルだけを対象にする
+
+```powershell
+.\test2.ps1 -TargetFolder "C:\MyProject" -IncludeExtension ".sh", ".env"
+
+```
+
+#### 5. ヘルプを表示する
+
+```powershell
+.\test2.ps1 -Help
+
+```
+
+---
+
+## ⚠️ 使用上の注意
+
+* **バイナリファイルについて**: 画像（`.png`等）や実行ファイル（`.exe`等）などのバイナリファイルに含まれるデータ（`0x0D`）を取り除くとファイルが破損します。フォルダ内を一括処理する場合は、必ず **`-ExcludeExtension`** で除外するか、**`-IncludeExtension`** でテキストファイルのみを指定してください。
