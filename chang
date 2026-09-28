@@ -1,0 +1,247 @@
+キャリッジリターン確認コマンド
+file filename.txt
+
+CRが含まれている場合: ASCII text, with CRLF line terminators
+CRが含まれていない場合: ASCII text
+
+chang.sh
+
+#!/usr/bin/env bash
+
+# Script name for self-exclusion
+SCRIPT_NAME=$(basename "$0")
+SCRIPT_REALPATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null)
+
+# Default options
+RECURSIVE=false
+RESTORE=false
+BACKUP=false
+IGNORE_PATTERNS=()
+MATCH_PATTERNS=()
+TARGET_DIR="."
+
+# Print usage / help
+show_help() {
+  cat << EOF
+Usage: $0 [OPTIONS] [DIRECTORY]
+
+Check and process Carriage Returns (CR / \r) in files.
+
+Options:
+  -r           Recursively search subdirectories.
+  -i PATTERN   Ignore files or extensions (can be used multiple times, e.g., -i "*.log" -i ".git").
+  -e PATTERN   Process ONLY matching files or extensions (can be used multiple times, e.g., -e "*.sh" -e "*.txt").
+  -rst         Restore mode: Add Carriage Returns (CR) to LF line endings.
+  -b           Create a backup (.bak) of modified files before processing.
+  -h           Display this help message.
+
+Examples:
+  $0                               Check current directory
+  $0 -r ./src                      Check ./src recursively
+  $0 -r -b -e "*.sh"               Recursively process only .sh files with backup
+  $0 -i "*.md" -i "node_modules"   Ignore .md files and node_modules directory
+  $0 -rst ./docs                   Restore CR to files in ./docs
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -r)
+      RECURSIVE=true
+      shift
+      ;;
+    -rst)
+      RESTORE=true
+      shift
+      ;;
+    -b)
+      BACKUP=true
+      shift
+      ;;
+    -i)
+      if [[ -n "$2" && "$2" != -* ]]; then
+        IGNORE_PATTERNS+=("$2")
+        shift 2
+      else
+        echo "Error: -i requires an argument." >&2
+        exit 1
+      fi
+      ;;
+    -e)
+      if [[ -n "$2" && "$2" != -* ]]; then
+        MATCH_PATTERNS+=("$2")
+        shift 2
+      else
+        echo "Error: -e requires an argument." >&2
+        exit 1
+      fi
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo "Error: Unknown option $1" >&2
+      show_help
+      exit 1
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+# Validate target directory
+if [[ ! -d "$TARGET_DIR" ]]; then
+  echo "Error: Directory '$TARGET_DIR' does not exist." >&2
+  exit 1
+fi
+
+# Build find command options
+FIND_CMD=(find "$TARGET_DIR")
+
+if [[ "$RECURSIVE" == false ]]; then
+  FIND_CMD+=(-maxdepth 1)
+fi
+
+FIND_CMD+=(-type f)
+
+# Collect files
+all_files=()
+while IFS= read -r -d '' file; do
+  # Exclude self script
+  file_realpath=$(realpath "$file" 2>/dev/null || readlink -f "$file" 2>/dev/null)
+  if [[ "$file_realpath" == "$SCRIPT_REALPATH" ]]; then
+    continue
+  fi
+
+  filename=$(basename "$file")
+
+  # Ignore patterns check (-i)
+  skip=false
+  for pat in "${IGNORE_PATTERNS[@]}"; do
+    if [[ "$filename" == $pat || "$file" == $pat ]]; then
+      skip=true
+      break
+    fi
+  done
+  if [[ "$skip" == true ]]; then
+    continue
+  fi
+
+  # Match patterns check (-e)
+  if [[ ${#MATCH_PATTERNS[@]} -gt 0 ]]; then
+    matched=false
+    for pat in "${MATCH_PATTERNS[@]}"; do
+      if [[ "$filename" == $pat || "$file" == $pat ]]; then
+        matched=true
+        break
+      fi
+    done
+    if [[ "$matched" == false ]]; then
+      continue
+    fi
+  fi
+
+  all_files+=("$file")
+done < <("${FIND_CMD[@]}" -print0)
+
+if [[ ${#all_files[@]} -eq 0 ]]; then
+  echo "No target files found."
+  exit 0
+fi
+
+target_files=()
+
+if [[ "$RESTORE" == false ]]; then
+  # Mode: Check and Remove CR
+  echo "--- Checking files for Carriage Return (CR) ---"
+  for file in "${all_files[@]}"; do
+    if grep -q $'\r' "$file" 2>/dev/null; then
+      echo -e "\033[31m${file#./} : CR found\033[0m"
+      target_files+=("$file")
+    else
+      echo "${file#./} : CR not found"
+    fi
+  done
+  echo "-----------------------------------------------"
+
+  if [[ ${#target_files[@]} -eq 0 ]]; then
+    echo "No Carriage Returns found in any file."
+    exit 0
+  fi
+
+  read -p "Remove Carriage Returns from affected files? (Y/n): " answer
+  case "$answer" in
+    [Yy]* | "" )
+      for file in "${target_files[@]}"; do
+        if [[ "$BACKUP" == true ]]; then
+          cp "$file" "${file}.bak"
+          echo "Backup created: ${file#./}.bak"
+        fi
+        tr -d '\r' < "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+        echo "Removed CR from: ${file#./}"
+      done
+      echo "Done!"
+      ;;
+    * )
+      echo "Operation canceled. Exiting."
+      exit 0
+      ;;
+  esac
+
+else
+  # Mode: Restore CR (-rst)
+  echo "--- Checking files to Restore Carriage Return (CR) ---"
+  for file in "${all_files[@]}"; do
+    if grep -q $'\r' "$file" 2>/dev/null; then
+      echo "${file#./} : Already has CR (Skipped)"
+    else
+      echo -e "\033[33m${file#./} : Missing CR (Target for restore)\033[0m"
+      target_files+=("$file")
+    fi
+  done
+  echo "-----------------------------------------------"
+
+  if [[ ${#target_files[@]} -eq 0 ]]; then
+    echo "All files already contain Carriage Returns."
+    exit 0
+  fi
+
+  read -p "Add Carriage Returns (CR) to affected files? (Y/n): " answer
+  case "$answer" in
+    [Yy]* | "" )
+      for file in "${target_files[@]}"; do
+        if [[ "$BACKUP" == true ]]; then
+          cp "$file" "${file}.bak"
+          echo "Backup created: ${file#./}.bak"
+        fi
+        sed -i 's/$/\r/' "$file"
+        echo "Restored CR to: ${file#./}"
+      done
+      echo "Done!"
+      ;;
+    * )
+      echo "Operation canceled. Exiting."
+      exit 0
+      ;;
+  esac
+fi
+
+
+主な機能・オプション
+[directory] : ディレクトリパスを指定可能（未指定時はカレントディレクトリ）
+
+-r : 指定ディレクトリ配下を再帰的（Recursive）に検索
+
+-i <pattern> : 指定したファイル名や拡張子を除外（Ignore）
+
+-e <pattern> : 指定したファイル名や拡張子のみを対象（Extension/Exact match）
+
+-rst : 逆にキャリッジリターン（CR）を復元・付与（Restore CR）
+
+-b : 処理実行前にバックアップファイル（.bak）を作成（Backup）
+
+-h : ヘルプ画面を英語で表示（Help）
