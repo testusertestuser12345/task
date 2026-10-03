@@ -1,0 +1,31 @@
+スクリプト
+
+cr.sh
+
+#!/bin/bash
+
+# 対象ディレクトリ（指定がなければカレントディレクトリ）
+TARGET_DIR="${1:-.}"
+
+echo "Searching for files with Carriage Return (CR) in: ${TARGET_DIR}"
+
+# \r を含むテキストファイルを検索して一括変換（sed -i）
+find "${TARGET_DIR}" -type f -exec grep -Iq $'\r' {} \; -print | while read -r file; do
+    echo "Cleaning: ${file}"
+    sed -i 's/\r$//' "${file}"
+done
+
+echo "Done!"
+
+
+検証
+キャリッジリターンのファイルを作成
+printf "test1\r\ntest2\r\n" > test.txt
+
+キャリッジリターンが含まれているか確認
+file <file_name>
+
+キャリッジリターンが含まれていた場合
+<file_name>: ASCII text, with CRLF line terminators
+含まれていない場合
+<file_name>: ASCII text  （with CRLF の表示が消える）
