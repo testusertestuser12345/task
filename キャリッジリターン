@@ -29,3 +29,46 @@ file <file_name>
 <file_name>: ASCII text, with CRLF line terminators
 含まれていない場合
 <file_name>: ASCII text  （with CRLF の表示が消える）
+
+
+ファイルが置かれるたびに即時実行（inotifywait）
+指定したフォルダに新しいファイルが作成・移動・書き込み完了されたタイミングで、リアルタイムにスクリプトを呼び出す
+
+inotify-tools のインストール
+sudo apt install inotify-tools
+
+監視用常駐スクリプト（watch_folder.sh）の作成
+ファイルが配置されたイベントを検知して remove_cr.sh を呼び出すスクリプトを作成
+
+#!/bin/bash
+
+# 監視対象フォルダ
+WATCH_DIR="/path/to/target_dir"
+# 削除スクリプトのパス
+REMOVE_SCRIPT="/path/to/remove_cr.sh"
+
+echo "Watching directory: ${WATCH_DIR}"
+
+# create (作成), close_write (書き込み完了), moved_to (移動して配置) を監視
+inotifywait -m -r -e create,close_write,moved_to --format '%w%f' "${WATCH_DIR}" | while read -r filepath; do
+    # ディレクトリではなくファイルの場合のみ処理
+    if [ -f "${filepath}" ]; then
+        # 新しく置かれたファイルに対して直接CR削除を実行
+        grep -Iq $'\r' "${filepath}" && {
+            echo "CR detected in: ${filepath}"
+            sed -i 's/\r$//' "${filepath}"
+        }
+    fi
+done
+
+使い方・バックグラウンド実行
+nohup ./watch_folder.sh > watch.log 2>&1 &
+
+検証
+# ターミナル1で監視スクリプトを実行
+./watch_folder.sh
+
+テスト用に CRLF のファイルを作成（create / close_write イベントのテスト）
+printf "line1\r\nline2\r\n" > test_inotify.txt
+
+ログで確認
