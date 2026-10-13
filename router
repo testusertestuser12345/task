@@ -2,6 +2,8 @@
 ls -la /dev/loop*
 
 sudo modprobe loop
+
+
 # ループデバイスのノードを手動作成（0〜7番あたりまであれば十分なことが多い）
 for i in $(seq 0 7); do
   sudo mknod -m660 /dev/loop$i b 7 $i 2>/dev/null
