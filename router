@@ -1,5 +1,8 @@
 ホスト
 
+sysctl kernel.apparmor_restrict_unprivileged_userns
+sysctl kernel.unprivileged_userns_clone
+
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ls -la /dev/loop*
