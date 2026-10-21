@@ -1,0 +1,41 @@
+docker compose up -d --build
+| IP | FQDN | サーバ | ポート | DNS |
+|---|---|---|---|---|
+| 172.16.0.53 | ns.example.com | BIND | 53 | A / PTR |
+| 172.16.0.10 | web.example.com | nginx | 443 | A / PTR |
+| 172.16.0.20 | hoge, fuga.example.com | nginx | 80→443 | A×2 / PTR×2(hoge, fuga) |
+| 172.16.0.30 | hogehoge.example.com | Apache | 443 | 奇数分に応答 / PTR |
+| 172.16.0.40 | hogehoge.example.com | nginx | 443 | 偶数分に応答 / PTR |
+| 172.16.0.50 | - (IPのみ) | Apache | 80 | 登録なし |
+| 172.16.0.60 | test.example.com (FQDNのみ) | Apache | 80 | 登録なし |
+
+
+## 使い方
+```bash
+sudo apt install -y docker.io docker-compose dnsutils curl   # 未導入なら
+sudo systemctl enable --now docker
+unzip dns-lab.zip && cd dns-lab
+sudo docker compose up -d --build   # 証明書作成 → ビルド → 全コンテナ起動
+./test.sh                           # 動作確認
+```
+
+dig @172.16.0.53 web.example.com
+dig @172.16.0.53 hoge.example.com
+dig @172.16.0.53 fuga.example.com
+dig @172.16.0.53 hogehoge.example.com
+dig @172.16.0.53 test.example.com
+
+dig @172.16.0.53 -x 172.16.0.10
+dig @172.16.0.53 -x 172.16.0.20
+dig @172.16.0.53 -x 172.16.0.30
+dig @172.16.0.53 -x 172.16.0.40
+dig @172.16.0.53 -x 172.16.0.50
+dig @172.16.0.53 -x 172.16.0.60
+
+IP=$(dig +short @172.16.0.53 hoge.example.com)
+echo $IP
+curl --cacert certs/ca/ca.crt --resolve hoge.example.com:443:$IP https://hoge.example.com/
+
+IP=$(dig +short @172.16.0.53 hoge.example.com)
+echo $IP
+curl --cacert certs/ca/ca.crt --resolve hoge.example.com:443:$IP https://hoge.example.com/
