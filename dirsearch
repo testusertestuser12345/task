@@ -1,0 +1,45 @@
+dirsearch概要
+オープンソースのコマンドラインツールです。Python製で、GitHub（maurosoria/dirsearch）で公開
+
+主な特徴
+組み込みワードリスト：一般的なパス名の辞書が最初から入っていて、そのまま使えます。独自の辞書も指定できます。
+拡張子の指定：-e php,html,js のように指定すると、各語に拡張子を付けたパスも試します
+マルチスレッド：並列でリクエストを送るので高速です
+再帰スキャン：見つかったディレクトリの中もさらに探索できます
+フィルタリング：ステータスコードやレスポンスサイズで結果を絞り込み、誤検知を減らせます
+柔軟なリクエスト設定：プロキシ、カスタムヘッダー、Cookie、User-Agent、遅延（レート制限）などを指定できます。
+レポート出力：結果をテキスト、JSON、CSV、HTMLなどで保存できる
+
+辞書の各行がパス候補。%EXT% を含む行だけ -e で指定した拡張子に展開される。
+200 だけでなく 301/302（リダイレクト）、401（要認証）、403（禁止だが存在はする）も「発見」として扱う。403 が返ること自体が情報になる。
+存在しないパスにも200を返すサイト向けに、起動時に「偽の正常応答」を学習して除外する wildcard / calibration 機構を持つ
+
+dirsearch --version   # 出ない場合は: apt show dirsearch | grep Version
+v0.5を使う方法
+git clone --depth 1 --branch v0.5.0 https://github.com/maurosoria/dirsearch.git ~/tools/dirsearch
+cd ~/tools/dirsearch
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+  
+  
+他ツールとの比較
+## dirsearch と類似ツールの比較
+
+| 観点 | dirsearch | dirb | gobuster | ffuf |
+|---|---|---|---|---|
+| 言語 | Python | C | Go | Go |
+| 速度 | 速い（v0.5で非同期がデフォルト、Rustバックエンドも選べる） | 遅い | 非常に速い | 非常に速い |
+| 同梱辞書 | 主辞書＋技術別カテゴリ辞書 | 複数同梱 | なし | なし |
+| 用途 | パス探索に特化、多機能 | パス探索のみ | dir/dns/vhost/fuzz/s3/gcs/tftp | 汎用ファザー（FUZZの位置を自由に指定） |
+| 拡張子 | `%EXT%`、`-e`、`-f` | `-X` | `-x` | `-e` |
+| 再帰 | `-r`（深さなどを指定可） | あり（デフォルト） | なし | `-recursion` |
+| クロール | `--crawl` | なし | なし | なし |
+| マッチ/除外 | status/size/word/line/regex/time | 弱い | status/length | status/size/word/line/regex/time |
+| プロキシ | HTTP/SOCKS、ローテーション、Tor、replay | 単一 | 単一 | 単一＋replay |
+| 出力 | 多数（json/csv/html/md/sqlite/MySQL/PostgreSQLなど） | テキスト | テキスト | json/csv/html/md |
+| 中断・再開 | あり（セッション） | なし | なし | なし |
+| ライブラリ利用 | Python API | なし | なし | なし |
+  
+**ひとことで言うと**：dirsearchは辞書とクロール、再開機能がそろった「パス探索の全部入り」、ffufは何でもファジングできる「汎用ツール」、gobusterは「速くてシンプル」、dirbは「古い定番」。
+
+  
