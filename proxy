@@ -1,0 +1,25 @@
+services:
+  socks:
+    image: ginuerzh/gost
+    container_name: socks-proxy
+    command: -D -L socks5://user:password@:1080   # ← -D でデバッグログ
+    network_mode: host
+    restart: unless-stopped
+
+
+
+docker compose up -d --force-recreate
+docker logs -f socks-proxy        # ← 別ターミナルで流しておく
+
+
+# (a) プロキシ経由 → 200
+curl -s -o /dev/null -w "via:    %{http_code}\n" -x socks5h://user:password@127.0.0.1:1080 http://127.0.0.1:8787/
+
+# (b) プロキシを止める → 経由はエラー(000)、直は200のまま
+docker stop socks-proxy
+curl -s -o /dev/null -w "via停止: %{http_code}\n" -x socks5h://user:password@127.0.0.1:1080 http://127.0.0.1:8787/
+curl -s -o /dev/null -w "直:     %{http_code}\n" http://127.0.0.1:8787/
+docker start socks-proxy
+
+# わざと間違ったパスワード → 失敗すれば「確かにプロキシで認証されている」
+curl -s -o /dev/null -w "誤認証: %{http_code}\n" -x socks5h://user:wrongpass@127.0.0.1:1080 http://127.0.0.1:8787/
