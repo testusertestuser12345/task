@@ -1,0 +1,234 @@
+dirsearch 説明資料 — 使い方・ワードリスト・プロキシ・ユースケース
+
+Webのディレクトリ/ファイル探索ツール dirsearch を、基本コマンド・ワードリスト・プロキシ（レジプロ含む）経由・ユースケース別コマンドまで一枚にまとめた実務リファレンス。コマンドは最新版（v0.5.0 系）基準。
+発表構成（アジェンダ）
+この資料は「概要→基本→辞書→プロキシ→実戦」の順で、手を動かしながら読める流れにしてある。発表では各章を1〜2分で。
+#
+章
+話すこと
+時間目安
+1
+概要
+dirsearch が何をするか、仕組み（辞書×ステータス判定）
+2分
+2
+基本コマンド
+まず覚える4つの形（-u / -e / -r / -o）
+2分
+3
+ワードリスト
+同梱辞書の中身・サイズ・カテゴリ・自作
+3分
+4
+プロキシ/レジプロ
+単段・認証・SOCKS・ローテーション・チェーン
+3分
+5
+ユースケース別
+vhost / リダイレクト対策 / API / バックアップ / 一括
+4分
+6
+運用の注意
+合法性とバージョン差
+1分
+dirsearch 概要
+dirsearch は、Webサーバに「ありそうなパス」を辞書で次々に要求し、返ってくるステータスコードや応答サイズから、リンクされていない隠しファイル・ディレクトリ（管理画面、.git、.env、バックアップ、API など）をあぶり出す Python 製の CLI ツール。
+仕組みのポイント
+• 辞書の各行がパス候補。%EXT% を含む行だけ -e で指定した拡張子に展開される。
+• 200 だけでなく 301/302（リダイレクト）、401（要認証）、403（禁止だが存在はする）も「発見」として扱う。403 が返ること自体が情報になる。
+• 存在しないパスにも200を返すサイト向けに、起動時に「偽の正常応答」を学習して除外する wildcard / calibration 機構を持つ。
+他ツールとの位置づけ：dirbより高機能、gobuster/ffufと比べて「同梱辞書が強く、再帰・クロール・レポートまで単体で揃う」のが強み。純粋なパラメータ総当たりは ffuf が得意。
+基本コマンド例
+まずはこの4つの形を覚えれば十分。最小は URL を渡すだけ。
+# 1) 最小（同梱辞書 db/dicc.txt を自動使用）
+dirsearch -u http://TARGET/
+
+# 2) 拡張子を展開（%EXT% が php,html,js に置き換わる）
+dirsearch -u http://TARGET/ -e php,html,js
+
+# 3) 見つかったディレクトリを再帰的に掘る + 深さ制限
+dirsearch -u http://TARGET/ -e php -r -R 3
+
+# 4) レポート出力（md/json/csv/html/sqlite）
+dirsearch -u http://TARGET/ -e php -o report.md -O md
+よく使うオプション
+オプション
+意味
+-u URL
+対象URL（複数可、-l ファイル で一覧）
+-e php,html,js
+拡張子展開。-f で全行末尾に付加
+-w ファイル
+辞書を指定（カンマ区切りで複数）
+-r / -R 3
+再帰 / 最大深度
+-t 30
+スレッド数
+-i / -x
+表示 / 除外するステータスコード
+--random-agent
+User-Agent をランダム化
+-o ファイル -O 形式
+レポート出力
+メモ：書き込めないディレクトリで実行すると Couldn't create report folder at reports/ で止まる。cd ~ など書き込める場所で実行するか、-o で出力先を明示する。
+ワードリストの説明
+辞書は db/ 以下にあり、本体を指定しなければ主辞書 db/dicc.txt（約9,680行・約144KB） が使われる。%EXT% を含む行が558行あり、拡張子展開すると実際の生成数は増える（拡張子なしで実測約12,295件）。
+技術別カテゴリ辞書（--wordlist-categories で選択、all で全部）
+カテゴリ
+行数
+中身
+common
+6,717
+汎用パス
+web
+978
+一般的なWebパス
+conf
+873
+設定ファイル系
+extensions
+558
+拡張子リスト
+logs
+199
+ログファイル
+db
+127
+DB関連
+backups
+108
+バックアップ
+vcs
+96
+.git / .svn 等
+keys
+22
+鍵・資格情報
+php/python/java/dotnet/node/coldfusion
+各9〜46
+WordPress/Laravel/Django/Flask/Spring/Express 等
+infra (aws/docker/k8s)
+6〜11
+クラウド/コンテナ
+中身の傾向：LFI狙いの etc/passwd etc/hosts や ../../../../../../etc/passwd、URLエンコード型 %2e%2e/.../etc/passwd、そして .env.*（大量）.git/ web.config wp-* *.sql *.zip id_rsa actuator/env swagger.json などが最初から入っている。
+拡張子展開の振る舞い
+• 既定：%EXT% の行だけを -e の拡張子に置換
+• -f / --force-extensions：全行の末尾に拡張子を追加
+• --overwrite-extensions：辞書内の拡張子を -e で上書き
+自作・確認コマンド
+# 生成されるエントリ数を表示して終了
+dirsearch --wordlist-status
+dirsearch -e php,html,js --wordlist-status
+
+# カテゴリを絞る（漏えいファイルだけ狙う）
+dirsearch -u http://TARGET/ --wordlist-categories backups,vcs,conf,keys
+
+# 自作辞書を複数指定
+dirsearch -u http://TARGET/ -w mylist.txt,db/categories/web.txt
+プロキシ／レジプロを挟むコマンド
+dirsearch は HTTP/SOCKS プロキシ、複数ローテーション、Tor、replay まで対彜。レジデンシャル等のIPプールは --proxies-file に並べれば毎リクエストでIPが散る。
+# 1) 単段（HTTP）
+dirsearch -u http://TARGET/ -e php -p http://127.0.0.1:8080
+
+# 2) SOCKS5（要: pip install pysocks）
+dirsearch -u http://TARGET/ -e php -p socks5://127.0.0.1:1080
+
+# 3) 認証付きプロキシ
+dirsearch -u http://TARGET/ -e php -p http://user:pass@gw:8000
+dirsearch -u http://TARGET/ -e php -p http://gw:8000 --proxy-auth user:pass
+
+# 4) レジプロ等のIPプールをローテーション（毎リクエストでIPが変わる）
+#    proxies.txt は 1行1プロキシ（user:pass 付きも可）
+dirsearch -u http://TARGET/ -e php \
+          --proxies-file proxies.txt \
+          --random-agent --delay 0.1 --max-rate 20
+
+# 5) 多段チェーン（手前の1台を指す。多段化はプロキシ側 or proxychains）
+dirsearch -u http://TARGET/ -e php -p http://first-hop:3128
+proxychains4 dirsearch -u http://TARGET/ -e php
+
+# 6) Tor 経由
+dirsearch -u http://TARGET/ --tor
+
+# 7) 見つかったパスだけ Burp に流す
+dirsearch -u http://TARGET/ -e php --replay-proxy http://127.0.0.1:8080
+proxies.txt の書式例
+http://user:pass@res1.provider.com:8000
+http://user:pass@res2.provider.com:8000
+socks5://127.0.0.1:1080
+オプション
+用途
+-p URL
+プロキシ指定（複数可でローテーション）
+--proxies-file
+プロキシ一覧をファイルで
+--proxy-auth user:pass
+プロキシ認証
+--replay-proxy URL
+ヒットだけ別プロキシへ
+--tor
+Torを使う
+--ip / --interface
+DNS固定 / 出口NIC指定
+注：古い版（Kali同梱など）は -p が無く --proxy 。プロキシ一覧も --proxy-list のことがある。迷ったら dirsearch --help | grep -i proxy で確認。この資料のコマンドは v0.5.0 系基準。
+ユースケース別コマンド例
+バーチャルホスト / APIバージョン探索
+# Hostヘッダを差し替えて仮想ホストを調べる
+dirsearch -u http://TARGET/ -H "Host: admin.target.local" -e php
+# テンプレート辞書で api/v1 、api/v2 などを動的生成（v0.5系）
+dirsearch -u http://TARGET/ -w db/templates/api.txt
+リダイレクト / soft-404 対策（「403が200に化ける」問題）
+# 既定でリダイレクトを追わないので302は302のまま。偽の200学習を強制
+dirsearch -u http://TARGET/ -e php --auto-calibration
+# ログインへ飛ぶ応答を除外
+dirsearch -u http://TARGET/ -e php --exclude-redirect '/login'
+# 既知ページに似た応答 / 文言 / 固定サイズで除外
+dirsearch -u http://TARGET/ -e php --exclude-response login.html
+dirsearch -u http://TARGET/ -e php --exclude-text "Sign in"
+dirsearch -u http://TARGET/ -e php --exclude-sizes 2048B
+# 複合条件（403だけ残す × 特定サイズ除外）
+dirsearch -u http://TARGET/ -e php --mc 403 --fs 2048 --fmode and
+403を「開ける」試み / 認証付きサイト
+# X-Forwarded-For 等で内部扱いを狙う
+dirsearch -u http://TARGET/admin/ -e php --include-status 200,403 \
+          -H "X-Forwarded-For: 127.0.0.1" -H "X-Original-URL: /admin/"
+# 認証状態で探索（basic/digest/bearer/ntlm/jwt）
+dirsearch -u http://TARGET/ -e php --auth-type bearer --auth 'eyJ...'
+# Burpで保存した生リクエスト（クッキー込み）をそのまま使う
+dirsearch --raw req.txt --scheme https -e php
+バックアップ / VCS 漏えい探索
+dirsearch -u http://TARGET/ --wordlist-categories backups,vcs,conf,keys
+# 見つかったファイルの .bak/.old/~/.zip を自動追撃
+dirsearch -u http://TARGET/ -e php --find-backup
+大量ターゲットを一括
+dirsearch -l urls.txt -e php                 # URL一覧
+cat hosts.txt | dirsearch --stdin -e php     # STDIN
+dirsearch --cidr 10.0.0.0/28 -e php          # CIDR
+dirsearch --nmap-report scan.xml -e php      # nmap -sV の結果から
+「最強」合わせ技（芋づる式フルコンボ）
+dirsearch -u http://TARGET/ \
+  --wordlist-categories all -e php,html,js,json,bak,old,zip,sql \
+  -r -R 3 --deep-recursive --crawl --find-backup \
+  --auto-calibration --random-agent \
+  --proxies-file proxies.txt --max-rate 40 --delay 0.03 \
+  --include-status 200,204,301,302,401,403 --exclude-sizes 0B \
+  -o out.md -O md -o out.json -O json --save-response ./responses
+運用の注意
+• 合法性：ディレクトリスキャンとプロキシ分散は、自分が所有するか書面で許可を得た対象にのみ行う。無許可のスキャンは不正アクセスになり得る。IPを変える目的が「検知回避による無許可アクセス」ならそれは違法。
+• バージョン差に注意：Kali 同梱など古い版と最新版（v0.5.0系）でオプションが違う。
+やりたいこと
+古い版
+最新版（v0.5）
+プロキシ指定
+--proxy（-p 無しのこと）
+-p / --proxy
+プロキシ一覧
+--proxy-list
+--proxies-file
+カテゴリ辞書
+なし
+--wordlist-categories
+• 迷ったら実環境で確認：dirsearch --help | grep -i proxy などで自分の版の正確なオプション名を見る。
+• 最新版を使うなら：pipx install dirsearch または pip install -U dirsearch、もしくは GitHub から git clone。
+• SOCKSを使う時：dirsearch 側に pip install pysocks が必要。
+• レポートフォルダエラー：書き込めるディレクトリ（cd ~ など）で実行するか -o で出力先を指定する。
