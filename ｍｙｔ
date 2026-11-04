@@ -1,0 +1,153 @@
+プロファイル
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/http
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/httpx
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/dynamichttp
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/websocket
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/dns
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/smb
+sudo ./mythic-cli install github https://github.com/MythicC2Profiles/tcp
+
+エージェント
+sudo ./mythic-cli install github https://github.com/MythicAgents/Apollo      # Windows .NET
+sudo ./mythic-cli install github https://github.com/MythicAgents/Poseidon    # Linux/macOS Go
+sudo ./mythic-cli install github https://github.com/MythicAgents/apfell      # macOS JXA
+sudo ./mythic-cli install github https://github.com/MythicAgents/Athena      # クロス .NET
+sudo ./mythic-cli install github https://github.com/MythicAgents/Medusa      # クロス Python
+sudo ./mythic-cli install github https://github.com/MythicAgents/merlin      # クロス Go(ARM32可)
+sudo ./mythic-cli install github https://github.com/MythicAgents/thanatos    # Rust
+sudo ./mythic-cli install github https://github.com/MythicAgents/Xenon       # C(httpx対応)
+sudo ./mythic-cli install github https://github.com/MythicAgents/Hannibal    # PIC C
+
+# エージェントを全部
+for url in $(curl -s "https://api.github.com/orgs/MythicAgents/repos?per_page=100" \
+  | grep -oP '"clone_url":\s*"\K[^"]+'); do
+  sudo ./mythic-cli install github "$url"
+done
+
+
+使ったもの
+merlin
+プロファイル　http
+コールバックIP　192.168.0.2 ポートはデフォルト指定のもの　IPはUbuntuのインターフェースのIP
+mipsでいける
+Ubuntu
+sudo socat TCP-LISTEN:80,fork,reuseaddr TCP:192.168.45.174:80（みしっくとコールバック（待ち受け））
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ペンギン
+
+
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+
+#確認
+sudo systemctl status docker
+
+４　sudoなしでDockerをつかえるようにする
+
+sudo usermod -aG docker $USER
+
+５　Penguinのインストール
+
+# 1. コンテナを取得
+docker pull rehosting/penguin
+
+# 2. penguin コマンドをインストール
+docker run rehosting/penguin penguin_install | sudo sh
+
+#確認
+penguin --help
+
+６　fw2tarのインストール
+
+# 1. fw2tar コンテナを取得
+docker pull rehosting/fw2tar:latest
+
+# 2. インストールコマンドを実行
+docker run rehosting/fw2tar fw2tar_install | sudo sh
+
+#確認
+fw2tar --help
+penguin --help
+
+７　ファームウェアをエミュレーション
+
+#ファームウェアの入手
+cd ~
+wget https://github.com/pr0v3rbs/FirmAE/releases/download/v1.0/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip
+
+#実行
+# 1. rootfsのtar.gzを生成
+fw2tar DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip
+
+# 2. 初期設定を自動生成
+penguin init DIR-868L_fw_revB_2-05b02_eu_multi_20161117.rootfs.tar.gz
+
+# 3. 実行
+penguin run projects/DIR-868L_fw_revB_2-05b02_eu_multi_20161117/config.yaml
+
+ログイン画面が表示されない場合
+
+対象にtelnet又はsshで入ったのち
+
+cat > /tmp/relay.py <<'EOF'
+import socket, threading, sys
+lport = int(sys.argv[1]); thost = sys.argv[2]; tport = int(sys.argv[3])
+def pipe(a,b):
+    try:
+        while True:
+            d=a.recv(65536)
+            if not d: break
+            b.sendall(d)
+    except Exception: pass
+    try: b.shutdown(socket.SHUT_WR)
+    except Exception: pass
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+s.bind(("0.0.0.0",lport)); s.listen(16)
+print("relay :%d -> %s:%d" % (lport,thost,tport), flush=True)
+while True:
+    c,_=s.accept()
+    try:
+        u=socket.create_connection((thost,tport))
+    except Exception:
+        c.close(); continue
+    threading.Thread(target=pipe,args=(c,u),daemon=True).start()
+    threading.Thread(target=pipe,args=(u,c),daemon=True).start()
+EOF
+
+
+起動時の例
+
+LIBINJ=$(find / -name 'lib_inject.so' 2>/dev/null | head -1)
+LD_PRELOAD="$LIBINJ" python3 /tmp/relay.py <待受> <宛先IP> <宛先ポート> &
+
+流用例
+# HTTPS管理画面 (443)
+LD_PRELOAD="$LIBINJ" python3 /tmp/relay.py 8443 127.0.0.1 443 &
+# 別UI/HNAPが8181等で動いている場合
+LD_PRELOAD="$LIBINJ" python3 /tmp/relay.py 8181 127.0.0.1 8181 &
+# telnet/独自TCPサービス
+LD_PRELOAD="$LIBINJ" python3 /tmp/relay.py 2323 127.0.0.1 23 &
+
+
+８　その他
+
+Archer C5400X
+64bit（AArch64）
+TP-Link Archer C5400XゲーミングルータにCVE-2024-5035（CVSSスコア10.0）という重大なRCE
+https://www.tp-link.com/en/support/download/archer-c5400x/
