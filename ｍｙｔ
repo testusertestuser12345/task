@@ -33,6 +33,80 @@ mipsでいける
 Ubuntu
 sudo socat TCP-LISTEN:80,fork,reuseaddr TCP:192.168.45.174:80（みしっくとコールバック（待ち受け））
 
+やられ環境
+docker-compose.yml
+
+services:
+  geoserver:
+    image: docker.osgeo.org/geoserver:2.24.1   # < 2.24.4 → CVE-2024-36401 脆弱
+    container_name: vuln-geoserver
+    environment:
+      - SKIP_DEMO_DATA=false
+    expose:
+      - "8080"                # ホストには出さない。network内部だけで公開
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.10
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:stable
+    container_name: vuln-nginx
+    depends_on:
+      - geoserver
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.20   # ← これが「振ったIP」。ここに80でアクセス
+    restart: unless-stopped
+    # ports: は書かない → ホストのポート衝突なし
+
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+nginx.conf
+
+services:
+  geoserver:
+    image: docker.osgeo.org/geoserver:2.24.1   # < 2.24.4 → CVE-2024-36401 脆弱
+    container_name: vuln-geoserver
+    environment:
+      - SKIP_DEMO_DATA=false
+    expose:
+      - "8080"                # ホストには出さない。network内部だけで公開
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.10
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:stable
+    container_name: vuln-nginx
+    depends_on:
+      - geoserver
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.20   # ← これが「振ったIP」。ここに80でアクセス
+    restart: unless-stopped
+    # ports: は書かない → ホストのポート衝突なし
+
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+geoサーバにおくる
+docker cp ./file.txt vuln-geoserver:/tmp/file.txt
+実行　am64
 
 
 
