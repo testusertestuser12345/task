@@ -1,3 +1,151 @@
+インストールしたエージェント
+
+ls ~/Mythic/InstalledServices/
+
+
+よく使うコマンド一式（すべて~/Mythicで実行）
+sudo ./mythic-cli status            # 稼働状況
+sudo ./mythic-cli start medusa      # 1エージェントだけ再起動（編集反映）
+sudo ./mythic-cli stop              # 全体停止（検証終了時など）
+sudo ./mythic-cli start             # 全体起動
+
+
+
+編集用のリポジトリをクローン
+cd ~/Mythic
+sudo ./mythic-cli install folder ~/merlin-edit
+
+
+説明文をかきかえる
+sudo vim ~/Mythic/InstalledServices/merlin/container/commands/pwd.go
+
+Description:                    "Print the Agent's current working directory",
+
+
+クローンを入れ直す（＝イメージ再ビルド）
+cd ~/Mythic
+sudo ./mythic-cli install folder ~/merlin-edit
+
+
+
+# hello.go をインストール先へコピー
+sudo cp ~/merlin-edit/Payload_Type/merlin/container/commands/hello.go \
+        ~/Mythic/InstalledServices/merlin/container/commands/hello.go
+
+# commands.go に hello() 登録（既に入っていれば何も変わりません＝安全）
+sudo sed -i 's/exit(), ifconfig()/exit(), hello(), ifconfig()/' \
+        ~/Mythic/InstalledServices/merlin/container/commands/commands.go
+
+# 確認（2つとも出ればOK）
+ls ~/Mythic/InstalledServices/merlin/container/commands/hello.go
+grep "hello()" ~/Mythic/InstalledServices/merlin/container/commands/commands.go
+
+cd ~/Mythic
+sudo ./mythic-cli build merlin
+
+
+sudo ./mythic-cli logs merlin
+
+
+めぢゅーさ
+
+ファイルを2つ作る
+同じhello.pyを、違う2つのフォルダに置くだけ。
+📛 名札用 → agent_functions/ フォルダに置く
+⚙️ 中身用 → agent_code/ フォルダに置く
+
+medusaを再起動
+
+sudo ./mythic-cli start medusa
+
+
+
+詳しく
+ファイルパス
+
+~/Mythic/InstalledServices/medusa/medusa/mythic/agent_functions/hello.py
+
+中身
+
+
+from mythic_container.MythicCommandBase import *
+import json
+from mythic_container.MythicRPC import *
+
+class HelloArguments(TaskArguments):
+    def __init__(self, command_line, **kwargs):
+        super().__init__(command_line, **kwargs)
+        self.args = []
+
+    async def parse_arguments(self):
+        pass
+
+
+class HelloCommand(CommandBase):
+    cmd = "hello"                         # ★コマンド名はここ
+    needs_admin = False
+    help_cmd = "hello"
+    description = "practice command: returns a fixed string"
+    version = 1
+    is_exit = False
+    is_file_browse = False
+    is_process_list = False
+    is_download_file = False
+    is_remove_file = False
+    is_upload_file = False
+    author = "@you"
+    argument_class = HelloArguments
+    attackmapping = []
+    attributes = CommandAttributes(
+        supported_python_versions=["Python 2.7", "Python 3.8"],
+        supported_os=[SupportedOS.MacOS, SupportedOS.Windows, SupportedOS.Linux],
+    )
+
+    async def create_tasking(self, task: MythicTask) -> MythicTask:
+        return task
+
+    async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:
+        resp = PTTaskProcessResponseMessageResponse(TaskID=task.Task.ID, Success=True)
+        return resp
+
+
+ファイル2：中身（実装）
+
+~/Mythic/InstalledServices/medusa/medusa/agent_code/hello.py
+
+    def hello(self, task_id):
+        return "hello from medusa"
+
+反映
+
+cd ~/Mythic
+sudo ./mythic-cli start medusa
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 プロファイル
 sudo ./mythic-cli install github https://github.com/MythicC2Profiles/http
 sudo ./mythic-cli install github https://github.com/MythicC2Profiles/httpx
